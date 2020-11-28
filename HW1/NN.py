@@ -19,7 +19,6 @@ class NN(nn.Module):
         super(NN, self).__init__()
         layers = [nn.Linear(input_dim, output_dims[0])]
         for i in range(1, len(output_dims)):
-            print('****** Layer Added ******')
             layers.append(nn.ReLU())
             layers.append(nn.Linear(output_dims[i - 1], output_dims[i]))
         self.fc_layers = nn.ModuleList(layers)
