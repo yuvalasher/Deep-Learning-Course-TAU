@@ -5,6 +5,7 @@ from torch import nn
 from torch import optim
 from tqdm import tqdm
 from utils import *
+from data_generation import generate_X_y, generate_regression_data
 
 RANDOM_NUM = 16
 PRINT_EVERY = 1
@@ -56,7 +57,7 @@ def test(net, x_test, y_test):
 
 
 if __name__ == '__main__':
-    x, y = generate_X_y(RANDOM_NUM)
+    x, y = generate_X_y(size=500)
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.25, random_state=RANDOM_NUM)
     lr = 0.01
     NUM_EPOCHS = 500

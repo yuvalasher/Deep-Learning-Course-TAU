@@ -1,13 +1,12 @@
-from typing import List, Tuple
+from typing import Tuple
 import numpy as np
 from matplotlib import pyplot as plt
 import seaborn as sns
-from sklearn.metrics import accuracy_score, auc, roc_curve
+from sklearn.metrics import accuracy_score, auc, roc_curve, mean_squared_error
+from consts import MIN_IMPROVEMENT, PATIENT_NUM_EPOCHS
 import torch
-from typing import Tuple
-from sklearn.datasets import make_moons, make_circles
-
-MOONS_NOISE = 0.2
+from torch import nn
+from torch.nn.modules import loss
 
 
 def convert_probs_to_preds(probs: np.array, threshold: float = 0.5, softmax: bool = False) -> np.array:
@@ -24,10 +23,14 @@ def calculate_accuracy(y_true: np.array, probs: np.array, threshold: float = 0.5
     return accuracy_score(y_true=y_true, y_pred=y_pred)
 
 
+def calculate_MSE(y_true: np.array, y_pred: np.array) -> float:
+    return mean_squared_error(y_true=y_true.detach().numpy(), y_pred=y_pred.detach().numpy())
+
+
 def plot_values_by_epochs(train_values: np.array, test_values: np.array, title: str) -> None:
     fig, ax = plt.subplots()
-    ax.plot(list(range(len(train_values))), train_values, label='Train Loss')
-    ax.plot(list(range(len(test_values))), test_values, label='Test_loss')
+    ax.plot(list(range(len(train_values))), train_values, label='Train')
+    ax.plot(list(range(len(test_values))), test_values, label='Test')
     ax.legend()
     ax.set_ylim(ymin=0)
     ax.set_title(title)
@@ -50,46 +53,26 @@ def plot_roc_curve(y_test: np.array, y_test_pred: np.array) -> None:
     plt.show()
 
 
-def generate_X_y(size: int, random_num: int) -> Tuple[np.array, np.array]:
-    np.random.seed(random_num)
-    torch.manual_seed(random_num)
-    x, y = make_moons(size, noise=MOONS_NOISE, random_state=random_num)
-    return x, y
+def test(net: nn.Module, loss_fn: loss, x_test: np.array, y_test: np.array) -> Tuple[float, np.array]:
+    """
+    Run the model on x_test and calculate the loss of the predictions.
+    The model run on evaluation mode and without updating the computational graph (no_grad)
+    """
+    net.eval()
+    with torch.no_grad():
+        y_test_pred = net(x_test)
+        loss = loss_fn(input=y_test_pred.reshape(-1), target=y_test.float())
+        test_loss = loss.item()
+    return test_loss, y_test_pred
 
-# # w = weights_initialization(input_dim, 1)
-# w = np.random.rand(2, 1)
-# b = np.random.randn(1)
-# lr = 0.5
-#
-# def kaiming(m: int, h: int):
-#     return np.random.uniform(low=0, high=1, size=(m, h)) * np.sqrt(2. / m)
-#
-# def weights_initialization(m, h) -> np.array:
-#     w = kaiming(m, h)
-#     return w
-#
-# def criterion(y_true: np.array, y_pred: np.array) -> float:
-#     return float(np.sum(0.5 * np.power(y_pred - y_true, 2)))
-#
-# def sigmoid(x):
-#     return 1 / (1 + np.exp(-x))
-#
-# def sigmoid_derivative(x):
-#     return sigmoid(x) * (1 - sigmoid(x))
-#
-# for epoch in tqdm(range(10000)):
-#     z = sigmoid(x.dot(w) + b)
-#     loss = criterion(y_true=y, y_pred=z)
-# #     loss += lambda_reg * np.sum(w ** 2)  # Regularization
-#     print(loss)
-#     """
-#     Update parameters - Backwards
-#     dE/dw = dE/dpred * dpred/dz * dz/dw
-#     dE/db = dE/dpred * dpred/dz * dz/db (1)
-#     """
-#     grad_W = ((z - y) * sigmoid_derivative(x)).T.dot(z)
-#     grad_b = (z - y) * sigmoid_derivative(z)
-#     w -= lr * grad_W
-#     for num in (z - y) * sigmoid_derivative(z):
-#         b -= lr * num
-# #     b += lr * grad_b
+
+def check_earlystopping(loss: np.array, epoch: int, min_improvement: float = MIN_IMPROVEMENT,
+                        patient_num_epochs: int = PATIENT_NUM_EPOCHS) -> bool:
+    """
+    Checking convergence in patient_num_epochs before to check if there is still loss improvement in the loss by at
+    minimum min_improvement.
+    This should be applied on a validation loss, hence, it can cause overfitting on the test set.
+    """
+    if epoch > patient_num_epochs:
+        return np.sum(np.where((loss[epoch - 1 - patient_num_epochs:epoch - 1] -
+                                loss[epoch - patient_num_epochs:epoch]) >= min_improvement, 1, 0)) == 0

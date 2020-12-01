@@ -5,12 +5,8 @@ from torch import nn
 from torch import optim
 from tqdm import tqdm
 from utils import *
-
-RANDOM_NUM = 16
-PRINT_EVERY = 1
-# Early Stopping Params
-MIN_IMPROVEMENT = 1e-3
-PATIENT_NUM_EPOCHS = 5
+from consts import PRINT_EVERY
+from data_generation import generate_X_y
 
 
 class BasicNN(nn.Module):
@@ -39,7 +35,8 @@ def train(net, x_train, y_train, x_test, y_test, is_earlystopping=True):
         with torch.no_grad():
             loss.backward()
             optimizer.step()
-        y_test_loss, y_test_pred = test(net, x_test, y_test)
+        y_test_loss, y_test_pred = test(net, loss_fn, x_test.float(), y_test.float())
+
         test_loss[epoch] = y_test_loss
         train_accuracy[epoch] = calculate_accuracy(y_true=y_train, probs=y_train_pred)
         test_accuracy[epoch] = calculate_accuracy(y_true=y_test, probs=y_test_pred)
@@ -70,29 +67,8 @@ def train(net, x_train, y_train, x_test, y_test, is_earlystopping=True):
         f'Best Epoch: {best_epoch}; Best Test Loss: {test_loss[best_epoch]:.2f}; Best Test Accuracy: {test_accuracy[best_epoch]:.5f}')
 
 
-def check_earlystopping(loss: np.array, epoch: int, min_improvement: float = MIN_IMPROVEMENT,
-                        patient_num_epochs: int = PATIENT_NUM_EPOCHS) -> bool:
-    """
-    Checking convergence in patient_num_epochs before to check if there is still loss improvement in the loss by at
-    minimum min_improvement.
-    This should be applied on a validation loss, hence, it can cause overfitting on the test set.
-    """
-    if epoch > patient_num_epochs:
-        return np.sum(np.where((loss[epoch - 1 - patient_num_epochs:epoch - 1] -
-                                loss[epoch - patient_num_epochs:epoch]) >= min_improvement, 1, 0)) == 0
-
-
-def test(net, x_test, y_test):
-    with torch.no_grad():
-        net.eval()
-        y_test_pred = net(x_test)
-        loss = loss_fn(input=y_test_pred.reshape(-1), target=y_test.float())
-        test_loss = loss.item()
-    return test_loss, y_test_pred
-
-
 if __name__ == '__main__':
-    x, y = generate_X_y(size=500, random_num=RANDOM_NUM)
+    x, y = generate_X_y(size=500)
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.25, random_state=RANDOM_NUM)
     lr = 0.01
     NUM_EPOCHS = 500
