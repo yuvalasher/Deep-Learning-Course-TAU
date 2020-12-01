@@ -21,8 +21,7 @@ class RegressionNN(nn.Module):
     def forward(self, x: np.array):
         for layer in self.fc_layers:
             x = layer(x)
-        scores = torch.sigmoid(x)
-        return scores
+        return x
 
 
 def train(net, x_train, y_train, x_test, y_test, is_earlystopping):
@@ -47,9 +46,9 @@ def train(net, x_train, y_train, x_test, y_test, is_earlystopping):
         if epoch % PRINT_EVERY == 0:
             print(f"Epoch: {epoch}/{NUM_EPOCHS},",
                   f"Train Loss: {loss.item():.2f},",
-                  f"Test Loss: {y_test_loss:.2f}",
-                  f"Train MSE: {train_MSE[epoch]:.2f}",
-                  f"Test MSE: {test_MSE[epoch]:.4f}")
+                  f"Test Loss: {y_test_loss:.2f}",)
+                  # f"Train MSE: {train_MSE[epoch]:.2f}",
+                  # f"Test MSE: {test_MSE[epoch]:.4f}")
 
         if is_earlystopping and check_earlystopping(loss=test_loss,
                                                     epoch=epoch):  # Assigment request to use it on Test set :(
