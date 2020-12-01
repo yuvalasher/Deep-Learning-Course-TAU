@@ -72,7 +72,7 @@ def train(net, x_train, y_train, x_test, y_test, is_earlystopping):
 
 if __name__ == '__main__':
     x, y = generate_X_y(size=500)
-    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.25, random_state=RANDOM_NUM)
+    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.25)
     lr = 0.001
     NUM_EPOCHS = 4000
     input_dim = x_train.shape[1]  # Num of features
