@@ -25,9 +25,6 @@ class RegressionNN(nn.Module):
         return scores
 
 
-from copy import deepcopy
-
-
 def train(net, x_train, y_train, x_test, y_test, is_earlystopping):
     train_loss = np.zeros(NUM_EPOCHS)
     test_loss = np.zeros(NUM_EPOCHS)
