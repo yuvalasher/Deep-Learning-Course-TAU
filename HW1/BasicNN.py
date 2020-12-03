@@ -21,11 +21,11 @@ class BasicNN(nn.Module):
 
 
 def train(net, x_train, y_train, x_test, y_test, is_earlystopping=True):
-    train_loss = np.zeros(NUM_EPOCHS)
-    test_loss = np.zeros(NUM_EPOCHS)
-    test_accuracy = np.zeros(NUM_EPOCHS)
-    train_accuracy = np.zeros(NUM_EPOCHS)
-    best_epoch = NUM_EPOCHS - 1
+    train_loss: np.array = np.zeros(NUM_EPOCHS)
+    test_loss: np.array = np.zeros(NUM_EPOCHS)
+    test_accuracy: np.array = np.zeros(NUM_EPOCHS)
+    train_accuracy: np.array = np.zeros(NUM_EPOCHS)
+    best_epoch: int = NUM_EPOCHS - 1
 
     for epoch in tqdm(range(NUM_EPOCHS)):
         net.train()

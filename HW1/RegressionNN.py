@@ -25,11 +25,11 @@ class RegressionNN(nn.Module):
 
 
 def train(net, x_train, y_train, x_test, y_test, is_earlystopping):
-    train_loss = np.zeros(NUM_EPOCHS)
-    test_loss = np.zeros(NUM_EPOCHS)
-    test_MSE = np.zeros(NUM_EPOCHS)
-    train_MSE = np.zeros(NUM_EPOCHS)
-    best_epoch = NUM_EPOCHS - 1
+    train_loss: np.array = np.zeros(NUM_EPOCHS)
+    test_loss: np.array = np.zeros(NUM_EPOCHS)
+    test_MSE: np.array = np.zeros(NUM_EPOCHS)
+    train_MSE: np.array = np.zeros(NUM_EPOCHS)
+    best_epoch: int = NUM_EPOCHS - 1
     for epoch in tqdm(range(NUM_EPOCHS)):
         net.train()
         y_train_pred = net(x_train.float())
