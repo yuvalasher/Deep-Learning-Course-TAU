@@ -60,7 +60,7 @@ def test(net: nn.Module, loss_fn: loss, x_test: np.array, y_test: np.array) -> T
     """
     net.eval()
     with torch.no_grad():
-        y_test_pred = net(x_test)
+        y_test_pred = net(x_test.float())
         loss = loss_fn(input=y_test_pred.reshape(-1), target=y_test.float())
         test_loss = loss.item()
     return test_loss, y_test_pred
@@ -76,3 +76,17 @@ def check_earlystopping(loss: np.array, epoch: int, min_improvement: float = MIN
     if epoch > patient_num_epochs:
         return np.sum(np.where((loss[epoch - 1 - patient_num_epochs:epoch - 1] -
                                 loss[epoch - patient_num_epochs:epoch]) >= min_improvement, 1, 0)) == 0
+
+def plot_decision_boundary(model, x, y):
+    # fig, ax = plt.subplots()
+    sns.scatterplot(x[:,0], x[:, 1], hue=y)
+    keys = list(model.state_dict().keys())
+    param1 = model.state_dict()[keys[0]].detach().numpy()
+    param2 = model.state_dict()[keys[1]].detach().numpy()
+    x1 = np.linspace(x.min()-1, x.max()+1, 10)
+    x2 = (-param2[0] - param1[0,0] * x1) / param1[0,1]
+    plt.plot(x1, x2, 'r', label="Decision Boundary")
+    plt.ylim(top=5)
+    plt.ylim(bottom=-5)
+    plt.legend()
+    plt.show()

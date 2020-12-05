@@ -13,11 +13,12 @@ class BasicNN(nn.Module):
     def __init__(self, input_dim, output_dim):
         super(BasicNN, self).__init__()
         self.fc = nn.Linear(input_dim, output_dim)
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, x: np.array):
-        scores = self.fc(x.float())
-        scores = torch.sigmoid(scores)
-        return scores
+        x = self.fc(x.float())
+        x = self.sigmoid(x)
+        return x
 
 
 def train(net, x_train, y_train, x_test, y_test, is_earlystopping=True):
@@ -27,16 +28,18 @@ def train(net, x_train, y_train, x_test, y_test, is_earlystopping=True):
     train_accuracy: np.array = np.zeros(NUM_EPOCHS)
     best_epoch: int = NUM_EPOCHS - 1
 
+    y_test_loss, y_test_pred = test(net, loss_fn, x_test.float(), y_test.float())
+    print('START!')
+    print(y_test_loss)
     for epoch in tqdm(range(NUM_EPOCHS)):
         net.train()
+        optimizer.zero_grad()
         y_train_pred = net(x_train)
         loss = loss_fn(input=y_train_pred.reshape(-1), target=y_train.float())
         train_loss[epoch] = loss.item()
-        with torch.no_grad():
-            loss.backward()
-            optimizer.step()
+        loss.backward()
+        optimizer.step()
         y_test_loss, y_test_pred = test(net, loss_fn, x_test.float(), y_test.float())
-
         test_loss[epoch] = y_test_loss
         train_accuracy[epoch] = calculate_accuracy(y_true=y_train, probs=y_train_pred)
         test_accuracy[epoch] = calculate_accuracy(y_true=y_test, probs=y_test_pred)
@@ -46,8 +49,8 @@ def train(net, x_train, y_train, x_test, y_test, is_earlystopping=True):
                   f"Test Loss: {y_test_loss:.4f}",
                   f"Test Accuracy: {test_accuracy[epoch]:.2f}")
 
-        if is_earlystopping and check_earlystopping(loss=test_loss,
-                                                    epoch=epoch):  # Assigment request to use it on Test set :(
+        if epoch == 221 or (is_earlystopping and check_earlystopping(loss=test_loss,
+                                                    epoch=epoch)):  # Assigment request to use it on Test set :(
             print('EarlyStopping !!!')
             best_epoch = np.argmin(test_loss[:epoch + 1])
             break
@@ -70,12 +73,12 @@ def train(net, x_train, y_train, x_test, y_test, is_earlystopping=True):
 if __name__ == '__main__':
     x, y = generate_X_y(size=500)
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.25)
-    lr = 0.01
+    lr = 1e-2
     NUM_EPOCHS = 500
     input_dim = x_train.shape[1]  # Num of features
     output_dim = 1
     net = BasicNN(input_dim=input_dim, output_dim=output_dim)
     optimizer = optim.Adam(params=net.parameters(), lr=lr)
-    loss_fn = nn.BCELoss(reduction='mean')
+    loss_fn = nn.BCELoss()
     train(net, torch.tensor(x_train), torch.tensor(y_train), torch.tensor(x_test), torch.tensor(y_test),
-          is_earlystopping=True)
+          is_earlystopping=False)

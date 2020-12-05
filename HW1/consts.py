@@ -1,3 +1,4 @@
+import numpy as np
 MOONS_NOISE = 0.2
 NOISE = 0.1
 # Early Stopping Params

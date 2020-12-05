@@ -34,4 +34,5 @@ def generate_regression_data(lower_bound: int = -5, upper_bound: int = 5, num_po
     y = np.linspace(lower_bound, upper_bound, num_points)
     xx, yy = np.meshgrid(x, y)
     z = np.sin(xx) * np.cos(yy) + NOISE * np.random.rand(xx.shape[0], xx.shape[1])
-    return np.append(xx.ravel(), yy.ravel()).reshape(-1, 2), z.ravel()
+    return np.append(xx.flatten(), yy.flatten()).reshape(2, -1).T, z.reshape(-1)
+    # return (np.append(xx.flatten(), yy.flatten()).reshape(2, -1)).reshape(900,2), z.flatten()

@@ -17,12 +17,13 @@ class NN(nn.Module):
             layers.append(nn.ReLU())
             layers.append(nn.Linear(output_dims[i - 1], output_dims[i]))
         self.fc_layers = nn.ModuleList(layers)
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, x: np.array):
         for layer in self.fc_layers:
             x = layer(x)
-        scores = torch.sigmoid(x)
-        return scores
+        x = self.sigmoid(x)
+        return x
 
 
 def train(net, x_train, y_train, x_test, y_test, is_earlystopping):
@@ -33,17 +34,17 @@ def train(net, x_train, y_train, x_test, y_test, is_earlystopping):
     best_epoch: int = NUM_EPOCHS - 1
     for epoch in tqdm(range(NUM_EPOCHS)):
         net.train()
+        optimizer.zero_grad()
         y_train_pred = net(x_train.float())
         loss = loss_fn(input=y_train_pred.reshape(-1), target=y_train.float())
+        loss.backward()
+        optimizer.step()
         train_loss[epoch] = loss.item()
-        with torch.no_grad():
-            loss.backward()
-            optimizer.step()
         y_test_loss, y_test_pred = test(net, loss_fn, x_test.float(), y_test.float())
 
         test_loss[epoch] = y_test_loss
-        test_accuracy[epoch] = calculate_accuracy(y_true=y_test, probs=y_test_pred)
         train_accuracy[epoch] = calculate_accuracy(y_true=y_train, probs=y_train_pred)
+        test_accuracy[epoch] = calculate_accuracy(y_true=y_test, probs=y_test_pred)
         if epoch % PRINT_EVERY == 0:
             print(f"Epoch: {epoch}/{NUM_EPOCHS},",
                   f"Train Loss: {loss.item():.2f},",
@@ -66,6 +67,8 @@ def train(net, x_train, y_train, x_test, y_test, is_earlystopping):
     plot_values_by_epochs(train_values=train_loss, test_values=test_loss, title='Loss VS Epochs')
     plot_values_by_epochs(train_values=train_accuracy, test_values=test_accuracy, title='Accuracy VS Epochs')
     plot_roc_curve(y_test, y_test_pred)
+    plot_decision_boundary(model=net, x=x_test, y=y_test)
+
     print(
         f'Best Epoch: {best_epoch}; Best Test Loss: {test_loss[best_epoch]:.2f}; Best Test Accuracy: {test_accuracy[best_epoch]:.5f}')
 
@@ -77,6 +80,8 @@ if __name__ == '__main__':
     NUM_EPOCHS = 4000
     input_dim = x_train.shape[1]  # Num of features
     output_dims = [10, 20, 30, 20, 5, 1]
+    # output_dims = [32, 64, 128, 256, 84, 1]
+
     # output_dims = [1]
     net = NN(input_dim=input_dim, output_dims=output_dims)
     optimizer = optim.Adam(params=net.parameters(), lr=lr, weight_decay=1e-3)
