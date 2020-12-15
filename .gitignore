@@ -136,3 +136,5 @@ dmypy.json
 /.idea
 /Pickles
 /Data
+*.xml
+*.iml
