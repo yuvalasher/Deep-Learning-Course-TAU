@@ -27,7 +27,10 @@ def calculate_MSE(y_true: np.array, y_pred: np.array) -> float:
     return mean_squared_error(y_true=y_true.detach().numpy(), y_pred=y_pred.detach().numpy())
 
 
-def plot_values_by_epochs(train_values: np.array, test_values: np.array, title: str) -> None:
+def plot_values_by_epochs(train_values: np.array, test_values: np.array, title: str='Loss VS Epoch') -> None:
+    """
+    Line-plots of 2 sets of values against the epoch value
+    """
     fig, ax = plt.subplots()
     ax.plot(list(range(len(train_values))), train_values, label='Train')
     ax.plot(list(range(len(test_values))), test_values, label='Test')

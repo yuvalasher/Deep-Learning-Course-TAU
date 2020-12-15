@@ -62,8 +62,7 @@ def train(net, x_train, y_train, x_test, y_test, is_earlystopping):
         best_epoch = np.argmin(test_loss)
     plot_values_by_epochs(train_values=train_loss, test_values=test_loss, title='Loss VS Epochs')
     # plot_values_by_epochs(train_values=train_MSE, test_values=test_MSE, title='MSE VS Epochs')
-    print(
-        f'Best Epoch: {best_epoch}; Best Test Loss: {test_loss[best_epoch]:.2f}; Best Test MSE: {test_MSE[best_epoch]:.5f}')
+    print(f'Best Epoch: {best_epoch}; Best Test Loss: {test_loss[best_epoch]:.2f}; Best Test MSE: {test_MSE[best_epoch]:.5f}')
 
 
 if __name__ == '__main__':
