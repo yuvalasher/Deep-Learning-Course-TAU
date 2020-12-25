@@ -270,7 +270,8 @@ def print_trainable_params(net: nn.Module) -> None:
 
 def get_subset_dataset_by_classes() -> Tuple[Dataset, Dataset]:
     """
-
+    Downloading the data of the CIFAR10, running a transform on the train and the infer data (separately), extracting
+    just the relevant labels with the defined amount of samples for each class
     :return:
     """
     if os.path.exists(os.path.abspath(os.path.join(FILES_PATH, 'train_dataset.pt'))):
@@ -290,10 +291,7 @@ def get_subset_dataset_by_classes() -> Tuple[Dataset, Dataset]:
 
 def create_dataset_dataloaders(train_dataset: Dataset, test_dataset: Dataset) -> Tuple[DataLoader, DataLoader]:
     """
-
-    :param train_dataset:
-    :param test_dataset:
-    :return:
+    Wrapping Datasets into DataLoaders
     """
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     test_dataloader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=True)
@@ -328,15 +326,11 @@ def get_representation_data(net: nn.Module, train_dataloader: DataLoader, test_d
     return train_representation_array, y_train, test_representation_array, y_test
 
 
-def get_representation_dataloaders(train_representation_array, y_train, test_representation_array, y_test) -> Tuple[
+def get_representation_dataloaders(train_representation_array: Tensor, y_train: Tensor, test_representation_array: Tensor, y_test: Tensor) -> Tuple[
     DataLoader, DataLoader]:
     """
-
-    :param train_representation_array:
-    :param y_train:
-    :param test_representation_array:
-    :param y_test:
-    :return:
+    Wrapping the Tensors of the representations from the pretrained network by a custom Dataset and inserted
+     to a DataLoader with defined BATCH_SIZE from consts.py
     """
     representation_train_dataloader = DataLoader(
         CIFARCustomDataset(features=train_representation_array, labels=y_train), batch_size=BATCH_SIZE,
