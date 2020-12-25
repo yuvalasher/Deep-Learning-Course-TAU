@@ -138,3 +138,9 @@ dmypy.json
 /Data
 *.xml
 *.iml
+.idea/
+/Models
+*.pt
+/hdf5
+/cifar
+*.hdf5
