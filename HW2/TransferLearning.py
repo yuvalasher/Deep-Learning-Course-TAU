@@ -81,20 +81,23 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
     train_accuracy: np.array = np.zeros(NUM_EPOCHS)
     val_losses: np.array = np.zeros(NUM_EPOCHS)
     val_accuracy: np.array = np.zeros(NUM_EPOCHS)
+    train_auc: np.array = np.zeros(NUM_EPOCHS)
+    val_auc: np.array = np.zeros(NUM_EPOCHS)
     best_epoch: int = NUM_EPOCHS - 1
 
     if val_dataloader:
-        untrained_test_loss, untrained_test_accuracy = infer(net, val_dataloader, loss_fn)
+        untrained_test_loss, untrained_test_accuracy, untrained_test_auc = infer(net, val_dataloader, loss_fn)
         print(f'Test Loss before training: {untrained_test_loss:.5f}')
 
     for epoch in range(NUM_EPOCHS):
         print(f'*************** Epoch {epoch + 1} ***************')
         train_correct_counter = 0
+        train_auc_accumulated = 0
+        loss_running = 0
         net.train()
         for x_train, y_train in tqdm(train_dataloader):
             if x_train.shape[-1] == 224:
                 y_train = torch.tensor(np.where(y_train == 3, 0, 1)).long()
-            #     print(y_train)
             if train_on_gpu:
                 net.cuda()
                 x_train, y_train = x_train.cuda(), y_train.cuda()
@@ -102,18 +105,22 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
             y_train_pred = net(x_train)
 
             loss = loss_fn(y_train_pred, y_train)
+            loss_running += loss.item()
             loss.backward()
             optimizer.step()
             _, train_preds = torch.max(y_train_pred, dim=1)
             train_correct_counter += torch.sum(train_preds == y_train)
+            train_auc_accumulated += calculate_auc_score(y_true=y_train, y_pred=train_preds)
 
-        train_losses[epoch] = loss.item() / len(train_dataloader.dataset)
+        train_losses[epoch] = loss_running / len(train_dataloader)
         train_accuracy[epoch] = train_correct_counter.item() / len(train_dataloader.dataset)
+        train_auc[epoch] = train_auc_accumulated / len(train_dataloader)
 
         if val_dataloader:
-            val_loss, val_acc = infer(net, val_dataloader, loss_fn)
+            val_loss, val_acc, val_auc_val = infer(net, val_dataloader, loss_fn)
             val_losses[epoch] = val_loss
             val_accuracy[epoch] = val_acc
+            val_auc[epoch] = val_auc_val
 
         if is_earlystopping and check_earlystopping(loss=val_losses, epoch=epoch):
             print('EarlyStopping !!!')
@@ -124,7 +131,8 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
             print(f"Epoch: {epoch + 1}/{NUM_EPOCHS},",
                   f"Train loss: {train_losses[epoch]:.5f}, Train Num Correct: {train_correct_counter} "
                   f"/ {len(train_dataloader.dataset)}, Train Accuracy: {train_accuracy[epoch]:.3f}\n",
-                  f"Validation loss: {val_losses[epoch]:.5f}, Validation Accuracy: {val_accuracy[epoch]:.3f}")
+                  f"Validation loss: {val_losses[epoch]:.5f}, Validation Accuracy: {val_accuracy[epoch]:.3f}",
+                  f"Validation AUC: {val_auc[epoch]:.5f}, Train AUC: {train_auc[epoch]:.5f}")
 
         if (epoch + 1) % SAVE_EVERY == 0:
             save_pt_model(net=net)
@@ -144,7 +152,7 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
     return net
 
 
-def infer(net: nn.Module, infer_dataloader: DataLoader, loss_fn: loss) -> Tuple[float, float]:
+def infer(net: nn.Module, infer_dataloader: DataLoader, loss_fn: loss) -> Tuple[float, float, float]:
     """
     Run the model on x_infer (both validation and test) and calculate the loss of the predictions.
     The model run on evaluation mode and without updating the computational graph (no_grad)
@@ -154,6 +162,8 @@ def infer(net: nn.Module, infer_dataloader: DataLoader, loss_fn: loss) -> Tuple[
     net.eval()
     running_loss = 0
     infer_correct_counter = 0
+    infer_auc_accumulated = 0
+
     for x, y in infer_dataloader:
         if x.shape[-1] == 224:
             y = torch.tensor(np.where(y == 3, 0, 1)).long()
@@ -164,11 +174,12 @@ def infer(net: nn.Module, infer_dataloader: DataLoader, loss_fn: loss) -> Tuple[
             _, preds = torch.max(y_pred, dim=1)
 
             infer_correct_counter += torch.sum(preds == y)
+            infer_auc_accumulated += calculate_auc_score(y_true=y, y_pred=preds)
 
             infer_loss = loss_fn(input=y_pred, target=y)
         running_loss += infer_loss
     infer_correct_counter = infer_correct_counter.item()
-    return running_loss / len(infer_dataloader.dataset), infer_correct_counter / len(infer_dataloader.dataset)
+    return running_loss / len(infer_dataloader), infer_correct_counter / len(infer_dataloader.dataset), infer_auc_accumulated / len(infer_dataloader)
 
 
 def get_net_representation(net: nn.Module, dataloader: Dataset) -> Tuple[np.array, List[float]]:
@@ -191,6 +202,7 @@ def get_net_representation(net: nn.Module, dataloader: Dataset) -> Tuple[np.arra
             y_array.append(y)
     return torch.cat(tuple(representations_array)), torch.cat(tuple(y_array))
 
+
 class NN(nn.Module):
     def __init__(self, input_dim: int, output_dims: List[int]):
         super(NN, self).__init__()
@@ -199,12 +211,12 @@ class NN(nn.Module):
             layers.append(nn.ReLU())
             layers.append(nn.Linear(output_dims[i - 1], output_dims[i]))
         self.fc_layers = nn.ModuleList(layers)
-        self.sigmoid = nn.Sigmoid()
+        # self.sigmoid = nn.Sigmoid()
 
     def forward(self, x: torch.tensor):
         for layer in self.fc_layers:
             x = layer(x)
-        x = self.sigmoid(x)
+        # x = self.sigmoid(x)
         return x
 
 
@@ -224,7 +236,7 @@ def train_and_predict_logistic_regression(X_train: np.array, y_train: np.array, 
 
 
 def define_net(resent_num_layers: int = RESNET_NUM_LAYERS, feature_extractor: bool = True,
-               connect_head: bool = True, head: nn.Module=None) -> Tuple[nn.Module, int]:
+               connect_head: bool = True, head: nn.Module = None) -> Tuple[nn.Module, int]:
     """
     :param resent_num_layers: define the type of the resnet
     :param feature_extractor: Indicates if the weights of the network should be freeze or not
@@ -250,7 +262,7 @@ def define_net(resent_num_layers: int = RESNET_NUM_LAYERS, feature_extractor: bo
             net.fc = head
             return net, num_features
         else:
-            net =  connect_net_to_fc(net, num_features=num_features, num_classes=NUM_CLASSES)
+            net = connect_net_to_fc(net, num_features=num_features, num_classes=NUM_CLASSES)
     else:
         net.fc = nn.Identity()
     return net, num_features
@@ -326,7 +338,8 @@ def get_representation_data(net: nn.Module, train_dataloader: DataLoader, test_d
     return train_representation_array, y_train, test_representation_array, y_test
 
 
-def get_representation_dataloaders(train_representation_array: Tensor, y_train: Tensor, test_representation_array: Tensor, y_test: Tensor) -> Tuple[
+def get_representation_dataloaders(train_representation_array: Tensor, y_train: Tensor,
+                                   test_representation_array: Tensor, y_test: Tensor) -> Tuple[
     DataLoader, DataLoader]:
     """
     Wrapping the Tensors of the representations from the pretrained network by a custom Dataset and inserted
@@ -376,7 +389,7 @@ if __name__ == '__main__':
     else:
         loss_fn = nn.CrossEntropyLoss()
         # loss_fn = nn.BCELoss()
-        classifier = NN(input_dim=num_features, output_dims=[1024, NUM_CLASSES])
+        classifier = NN(input_dim=num_features, output_dims=[20, 10, NUM_CLASSES])
 
         print_trainable_params(classifier)
 

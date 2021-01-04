@@ -18,6 +18,7 @@ from sklearn.metrics import roc_auc_score, roc_curve, recall_score, precision_sc
 
 from sklearn.metrics import accuracy_score, auc, roc_curve, mean_squared_error
 from consts import *
+
 #
 train_transform = transforms.Compose([
     transforms.RandomResizedCrop(RESNET_INPUT_SIZE),
@@ -31,6 +32,8 @@ infer_transform = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize(MEAN_NORMALIZATION_VECTOR, STD_NORMALIZATION_VECTOR)
 ])
+
+
 # train_transform = transforms.Compose([
 #     transforms.RandomResizedCrop(RESNET_INPUT_SIZE),
 #     transforms.CenterCrop(RESNET_INPUT_SIZE),
@@ -64,6 +67,7 @@ def calculate_model_metrics(y_true: np.array, y_pred: np.array, verbose: bool = 
 
     return accuracy, recall, precision
 
+
 def convert_probs_to_preds(probs: np.array, threshold: float = 0.5) -> np.array:
     """
     Convert probabilities into labels by a given threshold. Probabilities above the threshold will be 1, otherwise 0.
@@ -75,9 +79,11 @@ def calculate_accuracy(y_true: np.array, probs: np.array, threshold: float = 0.5
     y_pred = convert_probs_to_preds(probs=probs, threshold=threshold)
     return accuracy_score(y_true=y_true, y_pred=y_pred)
 
+
 def calculate_num_corrects(y_true: np.array, y_pred: np.array, threshold: float = 0.5):
     y_pred = convert_probs_to_preds(probs=y_pred, threshold=threshold)
     return (y_true == y_pred).sum()
+
 
 def calculate_MSE(y_true: np.array, y_pred: np.array) -> float:
     return mean_squared_error(y_true=y_true.detach().numpy(), y_pred=y_pred.detach().numpy())
@@ -96,6 +102,16 @@ def plot_values_by_epochs(train_values: np.array, test_values: np.array, title: 
     plt.xlabel('Epoch')
     plt.ylabel('Value')
     plt.show()
+
+
+def calculate_auc_score(y_true: np.array, y_pred: np.array) -> float:
+    if type(y_true) == torch.Tensor:
+        y_true = y_true.detach().numpy()
+    if type(y_pred) == torch.Tensor:
+        y_pred = y_pred.detach().numpy()
+
+    fpr, tpr, thresholds = roc_curve(y_true, y_pred)
+    return auc(fpr, tpr)
 
 
 def plot_roc_curve(y_test: np.array, y_test_pred: np.array) -> None:
@@ -151,9 +167,11 @@ def plot_decision_boundary(model, x, y):
     plt.legend()
     plt.show()
 
+
 def save_hdf5_to_file(obj_name: str, obj: object) -> None:
     with h5py.File(f'hdf5/{obj_name}.h5', 'w') as hf:
         hf.create_dataset(obj_name, data=obj)
+
 
 def load_hdf5_file(obj_name: str) -> Any:
     if not os.path.exists(f'{os.getcwd()}\hdf5'):

@@ -2,7 +2,7 @@ from typing import Tuple, List
 from pathlib import Path
 
 # Training Consts
-NUM_EPOCHS: int = 10
+NUM_EPOCHS: int = 50
 lr: float = 1e-3
 FINE_TUNING_LR: float = 1e-4
 BATCH_SIZE: int = 32
