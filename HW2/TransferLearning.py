@@ -364,7 +364,7 @@ if __name__ == '__main__':
     * Fine-Tuning: Freeze the pretrained-model's weights, connect the classifier, unfreeze all the weights, 
     and re-train the entire model on the new data with very low lr
     """
-    FEATURES_EXTRACTION: bool = True
+    FEATURES_EXTRACTION: bool = False
     NET: bool = True
     FINE_TUNING: bool = True
 
@@ -388,8 +388,7 @@ if __name__ == '__main__':
 
     else:
         loss_fn = nn.CrossEntropyLoss()
-        # loss_fn = nn.BCELoss()
-        classifier = NN(input_dim=num_features, output_dims=[20, 10, NUM_CLASSES])
+        classifier = NN(input_dim=num_features, output_dims=[NUM_CLASSES])
 
         print_trainable_params(classifier)
 
@@ -405,8 +404,7 @@ if __name__ == '__main__':
             print('Fine Tuning !')
             for param in resent.parameters():
                 param.requires_grad = True
-            # net, _ = define_net(feature_extractor=False, connect_head=False, head=classifier)
             print_trainable_params(resent)
-            optimizer = torch.optim.Adam(classifier.parameters(), lr=FINE_TUNING_LR)
+            optimizer = torch.optim.Adam(resent.parameters(), lr=FINE_TUNING_LR, weight_decay=5e-6)
             net = train(net=resent, optimizer=optimizer, train_dataloader=train_dataloader,
                         val_dataloader=test_dataloader, is_earlystopping=False)
