@@ -1,0 +1,202 @@
+import torch
+from torch import nn
+from torch.nn.modules import loss
+from torch import Tensor
+from torch.nn import functional as F
+from torch.utils.data import DataLoader, Dataset, Subset
+from tqdm import tqdm
+import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.linear_model import LogisticRegression, LinearRegression, LogisticRegressionCV
+from sklearn.metrics import roc_auc_score, roc_curve, auc
+from utils import *
+from consts import *
+
+train_on_gpu = torch.cuda.is_available()
+device = torch.device("cuda:0" if train_on_gpu else "cpu")
+
+def save_pt_model(net: nn.Module) -> None:
+    torch.save(net.state_dict(), 'Models/weights.pt')
+
+class AutoEncoderCustomDataset(Dataset):
+    """
+    Define x, y for data of AutoEncoder
+    The y is x (for reconstruction error)
+    """
+    def __init__(self, features: np.array):
+        self.features = torch.Tensor(features).float()
+        self.labels = torch.Tensor(features).float()
+
+    def __getitem__(self, idx):
+        return self.features[idx], self.labels[idx]
+
+    def __len__(self):
+        return self.labels.shape[0]
+
+class AutoEncoder(nn.Module):
+    def __init__(self, input_dim: int, output_dims: List[int]):
+        super(AutoEncoder, self).__init__()
+        encoder_layers = [nn.Linear(input_dim, output_dims[0])]
+        decoder_layers = []
+        for i in range(1, len(output_dims)):
+            encoder_layers.append(nn.ReLU())
+            encoder_layers.append(nn.Linear(output_dims[i - 1], output_dims[i]))
+        self.encoder = nn.Sequential(*encoder_layers)
+
+        for i in range(1, len(output_dims)):
+            decoder_layers.append(nn.ReLU())
+            decoder_layers.append(nn.Linear(output_dims[-i], output_dims[-i - 1]))
+        decoder_layers.extend([nn.ReLU(), nn.Linear(output_dims[0], input_dim), nn.Sigmoid()])
+        self.decoder = nn.Sequential(*decoder_layers)
+
+    def forward(self, x: torch.tensor) -> Tuple[torch.tensor, torch.tensor]:
+        encoding = self.encoder(x)
+        reconstruction = self.decoder(encoding)
+        return reconstruction
+
+    @staticmethod
+    def get_loss(original, reconstruction):
+        F.l1_loss(input=reconstruction, target=original)
+
+
+def focal_loss(output, target, gamma: float = GAMMA) -> float:
+    """
+    For imbalanced classification - for the "survived" class - we want to punish probability which far away than
+    the true label (0.2 for class "1" is far) - how much the example is "hard"
+    FL(pt) = -alpha(t) * (1-pt) ^ gamma * log(pt)
+    alpha(t) - function of the frequency of number of the "survived" class items
+    gamma - factor of how much you want to consider the "easy" examples against the "hard" examples
+
+    :return:
+    """
+    pass
+
+def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader = None,
+          val_dataloader: DataLoader = None, is_earlystopping: bool = False) -> nn.Module:
+    """
+    Training loop iterating on the train dataloader and updating the model's weights.
+    Inferring the validation dataloader & test dataloader, if given, to babysit the learning
+    Activating cuda device if available.
+    :return: Trained model
+    """
+    NUMBER_OF_PREDS: int = len(train_dataloader.dataset) * user_vector_size
+    train_losses: np.array = np.zeros(NUM_EPOCHS)
+    train_accuracy: np.array = np.zeros(NUM_EPOCHS)
+    val_losses: np.array = np.zeros(NUM_EPOCHS)
+    val_accuracy: np.array = np.zeros(NUM_EPOCHS)
+    train_auc: np.array = np.zeros(NUM_EPOCHS)
+    val_auc: np.array = np.zeros(NUM_EPOCHS)
+    best_epoch: int = NUM_EPOCHS - 1
+
+    if val_dataloader:
+        untrained_val_loss, untrained_val_accuracy, untrained_test_auc = infer(net, val_dataloader, loss_fn)
+        print(f'Validation Loss before training: {untrained_val_loss:.5f}')
+
+    for epoch in range(NUM_EPOCHS):
+        print(f'*************** Epoch {epoch + 1} ***************')
+        train_correct_counter = 0
+        train_auc_accumulated = 0
+        loss_running = 0
+        net.train()
+        for x_train, y_train in tqdm(train_dataloader):
+            if train_on_gpu:
+                net.cuda()
+                x_train, y_train = x_train.cuda(), y_train.cuda()
+            optimizer.zero_grad()
+            y_train_pred = net(x_train)
+
+            loss = loss_fn(y_train_pred, y_train)
+            loss_running += loss.item()
+            loss.backward()
+            optimizer.step()
+            train_preds = np.where(y_train_pred > 0.5, 1, 0) #
+            train_correct_counter += (train_preds == np.array(y_train)).sum()
+            # train_auc_accumulated += calculate_auc_score(y_true=y_train, y_pred=train_preds)
+
+        train_losses[epoch] = loss_running / len(train_dataloader)
+        train_accuracy[epoch] = train_correct_counter.item() / NUMBER_OF_PREDS
+        train_auc[epoch] = train_auc_accumulated / len(train_dataloader)
+
+        if val_dataloader:
+            val_loss, val_acc, val_auc_val = infer(net, val_dataloader, loss_fn)
+            val_losses[epoch] = val_loss
+            val_accuracy[epoch] = val_acc
+            val_auc[epoch] = val_auc_val
+
+        if is_earlystopping and val_dataloader and check_earlystopping(loss=val_losses, epoch=epoch):
+            print('EarlyStopping !!!')
+            best_epoch = np.argmin(val_losses[:epoch + 1])
+            break
+        if epoch % PRINT_EVERY == 0:
+            print(f"Epoch: {epoch + 1}/{NUM_EPOCHS},",
+                  f"Train loss: {train_losses[epoch]:.5f}, Train Num Correct: {train_correct_counter} "
+                  f"/ {NUMBER_OF_PREDS}, Train Accuracy: {train_accuracy[epoch]:.3f}, "
+                  f"Train AUC: {train_auc[epoch]:.5f}")
+
+            if val_dataloader:
+                print(f"Validation loss: {val_losses[epoch]:.5f}, Validation Accuracy: {val_accuracy[epoch]:.3f}",
+                      f"Validation AUC: {val_auc[epoch]:.5f}")
+
+        if (epoch + 1) % SAVE_EVERY == 0:
+            save_pt_model(net=net)
+
+    if best_epoch != NUM_EPOCHS - 1:  # Earlystopping NOT activated
+        train_losses = train_losses[:best_epoch + 1]
+        val_losses = val_losses[:best_epoch + 1]
+    else:
+        best_epoch = np.argmin(val_losses)
+
+    print(
+        f'Best Epoch: {best_epoch + 1}; Best Validation Loss: {val_losses[best_epoch]:.4f}')
+    if val_dataloader:
+        print('val_accuracy', val_accuracy)
+        print('val_loss', val_loss)
+    print(train_losses)
+    plot_values_by_epochs(train_values=train_losses, test_values=val_losses)
+    return net
+
+
+def infer(net: nn.Module, infer_dataloader: DataLoader, loss_fn: loss) -> Tuple[float, float, float]:
+    """
+    Run the model on x_infer (both validation and test) and calculate the loss of the predictions.
+    The model run on evaluation mode and without updating the computational graph (no_grad)
+    Running on the dataloader by batches, defined in each dataset's DataLoader
+    :return loss, accuracy
+    """
+    net.eval()
+    running_loss = 0
+    infer_correct_counter = 0
+    infer_auc_accumulated = 0
+
+    for x, y in infer_dataloader:
+        with torch.no_grad():
+            if train_on_gpu:
+                x, y = x.cuda(), y.cuda()
+            y_pred = net(x)
+            _, preds = torch.max(y_pred, dim=1)
+
+            infer_correct_counter += torch.sum(preds == y)
+            infer_auc_accumulated += calculate_auc_score(y_true=y, y_pred=preds)
+
+            infer_loss = loss_fn(input=y_pred, target=y)
+        running_loss += infer_loss
+    infer_correct_counter = infer_correct_counter.item()
+    return running_loss / len(infer_dataloader), infer_correct_counter / len(
+        infer_dataloader.dataset), infer_auc_accumulated / len(infer_dataloader)
+
+
+
+if __name__ == '__main__':
+    train_df, test_rand_df, test_pop_df = read_data_files()
+    train_df, train_preferences_matrix, validation_rand_df = get_validation_and_train_matrix(train_df=train_df)
+
+    train_dataloader = DataLoader(AutoEncoderCustomDataset(train_preferences_matrix), batch_size=BATCH_SIZE)
+    user_vector_size = train_preferences_matrix.shape[1]
+    ae = AutoEncoder(input_dim=user_vector_size, output_dims=[2048, 1024, 512, 256])
+    loss_fn = nn.BCELoss()
+    # print_trainable_params(ae)
+
+    optimizer = torch.optim.Adam(ae.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
+    net = train(net=ae, optimizer=optimizer, train_dataloader=train_dataloader,
+                       val_dataloader=None, is_earlystopping=False)
+    save_pt_model(net=net)
