@@ -145,3 +145,4 @@ dmypy.json
 /cifar
 *.hdf5
 .idea
+EX_2_TAU_COLAB.ipynb
