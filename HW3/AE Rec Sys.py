@@ -85,6 +85,8 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
     val_losses: np.array = np.zeros(NUM_EPOCHS)
     val_accuracy: np.array = np.zeros(NUM_EPOCHS)
     train_auc: np.array = np.zeros(NUM_EPOCHS)
+    train_positive_pred: int = 0
+    train_positive_number: int = 0
     val_auc: np.array = np.zeros(NUM_EPOCHS)
     best_epoch: int = NUM_EPOCHS - 1
 
@@ -97,6 +99,7 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
         train_correct_counter = 0
         train_auc_accumulated = 0
         loss_running = 0
+
         net.train()
         for x_train, y_train in tqdm(train_dataloader):
             if train_on_gpu:
@@ -109,13 +112,16 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
             loss_running += loss.item()
             loss.backward()
             optimizer.step()
-            train_preds = np.where(y_train_pred > 0.5, 1, 0) #
+            train_preds = np.where(y_train_pred > 0.5, 1, 0)
             train_correct_counter += (train_preds == np.array(y_train)).sum()
+            train_positive_number += get_number_of_positves(y=y_train)
+            train_positive_pred += get_number_of_tp(y_true=y_train, y_pred=train_preds)
             # train_auc_accumulated += calculate_auc_score(y_true=y_train, y_pred=train_preds)
 
         train_losses[epoch] = loss_running / len(train_dataloader)
         train_accuracy[epoch] = train_correct_counter.item() / NUMBER_OF_PREDS
         train_auc[epoch] = train_auc_accumulated / len(train_dataloader)
+        train_recall = train_positive_pred / train_positive_number * 100
 
         if val_dataloader:
             val_loss, val_acc, val_auc_val = infer(net, val_dataloader, loss_fn)
@@ -130,8 +136,8 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
         if epoch % PRINT_EVERY == 0:
             print(f"Epoch: {epoch + 1}/{NUM_EPOCHS},",
                   f"Train loss: {train_losses[epoch]:.5f}, Train Num Correct: {train_correct_counter} "
-                  f"/ {NUMBER_OF_PREDS}, Train Accuracy: {train_accuracy[epoch]:.3f}, "
-                  f"Train AUC: {train_auc[epoch]:.5f}")
+                  f"/ {NUMBER_OF_PREDS}, Train Accuracy: {train_accuracy[epoch]:.3f}, Train Recall: {train_recall:.3f}")
+                  #f"Train AUC: {train_auc[epoch]:.5f}")
 
             if val_dataloader:
                 print(f"Validation loss: {val_losses[epoch]:.5f}, Validation Accuracy: {val_accuracy[epoch]:.3f}",
@@ -192,11 +198,11 @@ if __name__ == '__main__':
 
     train_dataloader = DataLoader(AutoEncoderCustomDataset(train_preferences_matrix), batch_size=BATCH_SIZE)
     user_vector_size = train_preferences_matrix.shape[1]
-    ae = AutoEncoder(input_dim=user_vector_size, output_dims=[2048, 1024, 512, 256])
     loss_fn = nn.BCELoss()
+    ae = AutoEncoder(input_dim=user_vector_size, output_dims=[2048, 1024, 512, 256])
     # print_trainable_params(ae)
 
-    optimizer = torch.optim.Adam(ae.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
+    optimizer = torch.optim.Adam(ae.parameters(), lr=lr)#, weight_decay=WEIGHT_DECAY)
     net = train(net=ae, optimizer=optimizer, train_dataloader=train_dataloader,
                        val_dataloader=None, is_earlystopping=False)
     save_pt_model(net=net)

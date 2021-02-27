@@ -26,6 +26,30 @@ def _activate_random_seed(random_seed: int = SEED) -> None:
     torch.manual_seed(random_seed)
     random.seed(random_seed)
 
+def calcualte_recall(y_true: np.array, y_pred: np.array) -> float:
+    """
+    Calculating the accuracy of the "1" labels (recall) - querying the indices of the positive values in y_true and check the value
+    of the prediction in y_pred
+    :return: accuracy of the positive label
+    """
+    positive_indices = np.where(y_true.flatten() == 1)[0]
+    return (y_pred.flatten()[positive_indices].sum() / len(positive_indices)).sum()
+
+def get_number_of_tp(y_true: np.array, y_pred: np.array) -> float:
+    """
+    Calculating the number of positive examples which are true positive
+    :return: accuracy of the positive label
+    """
+    positive_indices = np.where(y_true.flatten() == 1)[0]
+    return y_pred.flatten()[positive_indices].sum()
+
+def get_number_of_positves(y: np.array) -> int:
+    """
+    Calculate the number of positives in an array
+    :param y:
+    :return:
+    """
+    return len(np.where(y.flatten() == 1)[0])
 
 def calculate_model_metrics(y_true: np.array, y_pred: np.array, verbose: bool = True, mode: str = 'Test') -> Tuple[
     float, float, float]:
