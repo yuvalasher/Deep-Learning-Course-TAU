@@ -11,18 +11,22 @@ from sklearn.linear_model import LogisticRegression, LinearRegression, LogisticR
 from sklearn.metrics import roc_auc_score, roc_curve, auc
 from utils import *
 from consts import *
+from focal_loss.focal_loss import FocalLoss
 
 train_on_gpu = torch.cuda.is_available()
 device = torch.device("cuda:0" if train_on_gpu else "cpu")
 
+
 def save_pt_model(net: nn.Module) -> None:
     torch.save(net.state_dict(), 'Models/weights.pt')
+
 
 class AutoEncoderCustomDataset(Dataset):
     """
     Define x, y for data of AutoEncoder
     The y is x (for reconstruction error)
     """
+
     def __init__(self, features: np.array):
         self.features = torch.Tensor(features).float()
         self.labels = torch.Tensor(features).float()
@@ -32,6 +36,7 @@ class AutoEncoderCustomDataset(Dataset):
 
     def __len__(self):
         return self.labels.shape[0]
+
 
 class AutoEncoder(nn.Module):
     def __init__(self, input_dim: int, output_dims: List[int]):
@@ -59,17 +64,21 @@ class AutoEncoder(nn.Module):
         F.l1_loss(input=reconstruction, target=original)
 
 
-def focal_loss(output, target, gamma: float = GAMMA) -> float:
+def focal_loss(input, target,alpha=ALPHA_TENSOR, gamma: float = GAMMA) -> Tensor:
     """
     For imbalanced classification - for the "survived" class - we want to punish probability which far away than
     the true label (0.2 for class "1" is far) - how much the example is "hard"
     FL(pt) = -alpha(t) * (1-pt) ^ gamma * log(pt)
     alpha(t) - function of the frequency of number of the "survived" class items
     gamma - factor of how much you want to consider the "easy" examples against the "hard" examples
-
-    :return:
     """
-    pass
+    pt = torch.where(target == 1, input, 1 - input)
+    pt_op = torch.where(target == 1, 1-input, input)
+    ce = - torch.log(pt)
+    at = torch.where(target == 1, alpha, 1 - alpha)
+    focal_loss = at * (pt_op ** gamma) * ce
+    return focal_loss.mean()
+
 
 def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader = None,
           val_dataloader: DataLoader = None, is_earlystopping: bool = False) -> nn.Module:
@@ -91,7 +100,7 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
     best_epoch: int = NUM_EPOCHS - 1
 
     if val_dataloader:
-        untrained_val_loss, untrained_val_accuracy, untrained_test_auc = infer(net, val_dataloader, loss_fn)
+        untrained_val_loss, untrained_val_accuracy = infer(net, val_dataloader, loss_fn)
         print(f'Validation Loss before training: {untrained_val_loss:.5f}')
 
     for epoch in range(NUM_EPOCHS):
@@ -112,6 +121,7 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
             loss_running += loss.item()
             loss.backward()
             optimizer.step()
+            # classfied_data = classify_preference_for_each_user(infer_df=validation_rand_df, y_pred=y_train_pred)
             train_preds = np.where(y_train_pred > 0.5, 1, 0)
             train_correct_counter += (train_preds == np.array(y_train)).sum()
             train_positive_number += get_number_of_positves(y=y_train)
@@ -124,10 +134,10 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
         train_recall = train_positive_pred / train_positive_number * 100
 
         if val_dataloader:
-            val_loss, val_acc, val_auc_val = infer(net, val_dataloader, loss_fn)
+            val_loss, val_acc = infer(net, val_dataloader, loss_fn)
             val_losses[epoch] = val_loss
             val_accuracy[epoch] = val_acc
-            val_auc[epoch] = val_auc_val
+            # val_auc[epoch] = val_auc_val
 
         if is_earlystopping and val_dataloader and check_earlystopping(loss=val_losses, epoch=epoch):
             print('EarlyStopping !!!')
@@ -137,7 +147,7 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
             print(f"Epoch: {epoch + 1}/{NUM_EPOCHS},",
                   f"Train loss: {train_losses[epoch]:.5f}, Train Num Correct: {train_correct_counter} "
                   f"/ {NUMBER_OF_PREDS}, Train Accuracy: {train_accuracy[epoch]:.3f}, Train Recall: {train_recall:.3f}")
-                  #f"Train AUC: {train_auc[epoch]:.5f}")
+            # f"Train AUC: {train_auc[epoch]:.5f}")
 
             if val_dataloader:
                 print(f"Validation loss: {val_losses[epoch]:.5f}, Validation Accuracy: {val_accuracy[epoch]:.3f}",
@@ -166,7 +176,9 @@ def infer(net: nn.Module, infer_dataloader: DataLoader, loss_fn: loss) -> Tuple[
     """
     Run the model on x_infer (both validation and test) and calculate the loss of the predictions.
     The model run on evaluation mode and without updating the computational graph (no_grad)
-    Running on the dataloader by batches, defined in each dataset's DataLoader
+    In the AutoEncoder task - taking the x_train for inference, reconstructing the user vector
+    and checking which of the 2 items for a given user (in validation, test) is higher and classify it
+    as "1", as it more likely for the user to like that item.
     :return loss, accuracy
     """
     net.eval()
@@ -179,17 +191,15 @@ def infer(net: nn.Module, infer_dataloader: DataLoader, loss_fn: loss) -> Tuple[
             if train_on_gpu:
                 x, y = x.cuda(), y.cuda()
             y_pred = net(x)
-            _, preds = torch.max(y_pred, dim=1)
+            infer_preds = classify_preference_for_each_user(infer_df=validation_rand_df, y_pred=y_pred)
+            infer_correct_counter += len(infer_preds) - infer_preds.sum() # All the validation correct preds located in index 0
+            # infer_auc_accumulated += calculate_auc_score(y_true=y, y_pred=preds)
+            infer_loss = loss_fn(y_pred, y)
 
-            infer_correct_counter += torch.sum(preds == y)
-            infer_auc_accumulated += calculate_auc_score(y_true=y, y_pred=preds)
-
-            infer_loss = loss_fn(input=y_pred, target=y)
         running_loss += infer_loss
-    infer_correct_counter = infer_correct_counter.item()
+    # infer_correct_counter = infer_correct_counter.item()
     return running_loss / len(infer_dataloader), infer_correct_counter / len(
-        infer_dataloader.dataset), infer_auc_accumulated / len(infer_dataloader)
-
+        infer_dataloader.dataset)  # , infer_auc_accumulated / len(infer_dataloader)
 
 
 if __name__ == '__main__':
@@ -197,12 +207,15 @@ if __name__ == '__main__':
     train_df, train_preferences_matrix, validation_rand_df = get_validation_and_train_matrix(train_df=train_df)
 
     train_dataloader = DataLoader(AutoEncoderCustomDataset(train_preferences_matrix), batch_size=BATCH_SIZE)
+    val_dataloader = DataLoader(AutoEncoderCustomDataset(train_preferences_matrix), batch_size=NUM_USERS)
     user_vector_size = train_preferences_matrix.shape[1]
-    loss_fn = nn.BCELoss()
-    ae = AutoEncoder(input_dim=user_vector_size, output_dims=[2048, 1024, 512, 256])
+    # loss_fn = nn.BCELoss()
+    loss_fn = FocalLoss(alpha=ALPHA_TENSOR, gamma=GAMMA)
+    # loss_fn = focal_loss
+    ae = AutoEncoder(input_dim=user_vector_size, output_dims=[2048, 1024, 512, 256, 128, 64])
     # print_trainable_params(ae)
 
-    optimizer = torch.optim.Adam(ae.parameters(), lr=lr)#, weight_decay=WEIGHT_DECAY)
+    optimizer = torch.optim.Adam(ae.parameters(), lr=lr)  # , weight_decay=WEIGHT_DECAY)
     net = train(net=ae, optimizer=optimizer, train_dataloader=train_dataloader,
-                       val_dataloader=None, is_earlystopping=False)
+                val_dataloader=val_dataloader, is_earlystopping=True)
     save_pt_model(net=net)

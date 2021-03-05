@@ -26,6 +26,7 @@ def _activate_random_seed(random_seed: int = SEED) -> None:
     torch.manual_seed(random_seed)
     random.seed(random_seed)
 
+
 def calcualte_recall(y_true: np.array, y_pred: np.array) -> float:
     """
     Calculating the accuracy of the "1" labels (recall) - querying the indices of the positive values in y_true and check the value
@@ -35,6 +36,7 @@ def calcualte_recall(y_true: np.array, y_pred: np.array) -> float:
     positive_indices = np.where(y_true.flatten() == 1)[0]
     return (y_pred.flatten()[positive_indices].sum() / len(positive_indices)).sum()
 
+
 def get_number_of_tp(y_true: np.array, y_pred: np.array) -> float:
     """
     Calculating the number of positive examples which are true positive
@@ -43,6 +45,7 @@ def get_number_of_tp(y_true: np.array, y_pred: np.array) -> float:
     positive_indices = np.where(y_true.flatten() == 1)[0]
     return y_pred.flatten()[positive_indices].sum()
 
+
 def get_number_of_positves(y: np.array) -> int:
     """
     Calculate the number of positives in an array
@@ -50,6 +53,45 @@ def get_number_of_positves(y: np.array) -> int:
     :return:
     """
     return len(np.where(y.flatten() == 1)[0])
+
+
+def get_mask_matrix_by_infer_df(infer_df: pd.DataFrame, y_pred_shape: Tuple[int, int]) -> np.array:
+    """
+    Create mask matrix of each user to the infer items in the infer_df
+    The mask contains "1" & "0" for each item for each user, if the item belongs in the dataframe,
+    we put "1" in the corresponds location in the matrix, otherwise, "0".
+    For each user there are 2 items concatenated to users_items.
+    :return: mask array (ma)
+    """
+    users_items = [[item_1, item_2] for item_1, item_2 in zip(infer_df[:, 1], infer_df[:, 2])]
+    ma = np.zeros(y_pred_shape)
+    for user_id, user_items in zip(infer_df[:, 0], users_items):
+        np.put(ma[user_id], user_items, 1)
+    return ma
+
+def get_user_items_scores_by_mask_matrix(y_pred_scores: np.array, mask_matrix: np.array) -> np.array:
+    """
+    From y_pred_scores & mask_matrix, we create (NUM_USERS, 2) array for 2 items
+    for each user with their value
+    ma = mask array
+    :return: array with the items belong to user
+    """
+    ma = y_pred_scores.detach().numpy() * mask_matrix
+    return ma[ma.nonzero()].reshape(-1, 2)
+
+
+def classify_preference_for_each_user(infer_df: pd.DataFrame, y_pred: np.array) -> np.array:
+    """
+    Classify the most likely each user to like the most from 2 items (by infer dataframe) - for each user, classify the
+    item is more likely as the location (scores of 0.5, 0.9 -> results to "1" as the second location has better reconstruction)
+    np.argmax((df*ma)[(df * ma).nonzero()].reshape(-1,2), axis=1)
+    :return: Index of the most likely item for each user
+    """
+    mask_matrix = get_mask_matrix_by_infer_df(infer_df=infer_df, y_pred_shape=y_pred.shape)
+    user_items_scores = get_user_items_scores_by_mask_matrix(mask_matrix=mask_matrix,
+                                                             y_pred_scores=y_pred)
+    return np.argmax(user_items_scores, axis=1)
+
 
 def calculate_model_metrics(y_true: np.array, y_pred: np.array, verbose: bool = True, mode: str = 'Test') -> Tuple[
     float, float, float]:
@@ -157,7 +199,7 @@ def check_earlystopping(loss: np.array, epoch: int, min_improvement: float = MIN
                                 loss[epoch - patient_num_epochs:epoch]) >= min_improvement, 1, 0)) == 0
 
 
-def save_hdf5_to_file(obj_name: str, obj: object) -> None:
+def save_hdf5_to_file(obj_name: str, obj: Any) -> None:
     with h5py.File(PROJECT_PATH / 'hdf5' / f'{obj_name}.h5', 'w') as hf:
         hf.create_dataset(obj_name, data=obj)
 
@@ -191,7 +233,7 @@ def get_train_random_validation_data(train_df: pd.DataFrame) -> Tuple[pd.DataFra
     num_users, num_items = get_num_users_items(df=train_df)
     validation_indices = []
     validation_df = pd.DataFrame(columns=['UserID', 'Item1', 'Item2'])
-    for user_id in train_df.UserID.unique():
+    for user_id in train_df.UserID.values:
         user_data = train_df.query('UserID == @user_id')
         validation_row = user_data.sample(1)
         validation_row.rename(columns={'ItemID': 'Item1'}, inplace=True)
@@ -212,7 +254,7 @@ def create_user_items_preferences_matrix(df: pd.DataFrame) -> np.array:
     """
     fill_value = 1
     preferences_matrix = np.zeros(get_num_users_items(df=df))
-    for user_id in df.UserID.unique():
+    for user_id in df.UserID.values:
         np.put(preferences_matrix[user_id], df.query('UserID == @user_id').ItemID.values, fill_value)
     return preferences_matrix.astype(np.float64)
 
@@ -242,5 +284,6 @@ def get_validation_and_train_matrix(train_df: pd.DataFrame) -> Tuple[pd.DataFram
         train_df, train_preferences_matrix, validation_rand_df = load_hdf5_file('train_df'), load_hdf5_file(
             'train_preferences_matrix'), load_hdf5_file('validation_rand_df')
     return train_df, train_preferences_matrix, validation_rand_df
+
 
 _activate_random_seed()
