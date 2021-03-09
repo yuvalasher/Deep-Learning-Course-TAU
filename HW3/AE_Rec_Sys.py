@@ -18,7 +18,14 @@ device = torch.device("cuda:0" if train_on_gpu else "cpu")
 
 
 def save_pt_model(net: nn.Module) -> None:
-    torch.save(net.state_dict(), 'Models/weights.pt')
+    torch.save(net.state_dict(), MODEL_WEIGHTS_PATH)
+
+
+def load_pt_model() -> nn.Module:
+    net = AutoEncoder(input_dim=NUM_ITEMS, output_dims=OUTPUT_DIMS)
+    net.load_state_dict(torch.load(MODEL_WEIGHTS_PATH))
+    net.eval()
+    return net
 
 
 class AutoEncoderCustomDataset(Dataset):
@@ -26,6 +33,7 @@ class AutoEncoderCustomDataset(Dataset):
     Define x, y for data of AutoEncoder
     The y is x (for reconstruction error)
     """
+
     def __init__(self, features: np.array):
         self.features = torch.Tensor(features).float()
         self.labels = torch.Tensor(features).float()
@@ -59,7 +67,7 @@ class AutoEncoder(nn.Module):
         return reconstruction
 
 
-def focal_loss(input, target,alpha=ALPHA_TENSOR, gamma: float = GAMMA) -> Tensor:
+def focal_loss(input, target, alpha=ALPHA_TENSOR, gamma: float = GAMMA) -> Tensor:
     """
     For imbalanced classification - for the "survived" class - we want to punish probability which far away than
     the true label (0.2 for class "1" is far) - how much the example is "hard"
@@ -68,7 +76,7 @@ def focal_loss(input, target,alpha=ALPHA_TENSOR, gamma: float = GAMMA) -> Tensor
     gamma - factor of how much you want to consider the "easy" examples against the "hard" examples
     """
     pt = torch.where(target == 1, input, 1 - input)
-    pt_op = torch.where(target == 1, 1-input, input)
+    pt_op = torch.where(target == 1, 1 - input, input)
     ce = - torch.log(pt)
     at = torch.where(target == 1, alpha, 1 - alpha)
     focal_loss = at * (pt_op ** gamma) * ce
@@ -76,14 +84,14 @@ def focal_loss(input, target,alpha=ALPHA_TENSOR, gamma: float = GAMMA) -> Tensor
 
 
 def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader = None,
-          val_dataloader: DataLoader = None, is_earlystopping: bool = False) -> nn.Module:
+          val_dataloader: DataLoader = None, infer_df: np.array = None, is_earlystopping: bool = False) -> nn.Module:
     """
     Training loop iterating on the train dataloader and updating the model's weights.
     Inferring the validation dataloader & test dataloader, if given, to babysit the learning
     Activating cuda device if available.
     :return: Trained model
     """
-    NUMBER_OF_PREDS: int = len(train_dataloader.dataset) * user_vector_size
+    NUMBER_OF_PREDS: int = len(train_dataloader.dataset) * NUM_USERS
     train_losses: np.array = np.zeros(NUM_EPOCHS)
     train_accuracy: np.array = np.zeros(NUM_EPOCHS)
     val_losses: np.array = np.zeros(NUM_EPOCHS)
@@ -95,7 +103,7 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
     best_epoch: int = NUM_EPOCHS - 1
 
     if val_dataloader:
-        untrained_val_loss, untrained_val_accuracy = infer(net, val_dataloader, loss_fn)
+        untrained_val_loss, untrained_val_accuracy = infer(net, val_dataloader, loss_fn, infer_df)
         print(f'Validation Loss before training: {untrained_val_loss:.5f}')
 
     for epoch in range(NUM_EPOCHS):
@@ -122,7 +130,6 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
             train_correct_counter += (train_preds == np.array(y_train)).sum()
             train_positive_number += get_number_of_positves(y=y_train)
             train_positive_pred += get_number_of_tp(y_true=y_train, y_pred=train_preds)
-            # train_auc_accumulated += calculate_auc_score(y_true=y_train, y_pred=train_preds)
 
         train_losses[epoch] = loss_running / len(train_dataloader)
         train_accuracy[epoch] = train_correct_counter.item() / NUMBER_OF_PREDS
@@ -130,7 +137,7 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
         train_recall = train_positive_pred / train_positive_number * 100
 
         if val_dataloader:
-            val_loss, val_acc = infer(net, val_dataloader, loss_fn)
+            val_loss, val_acc = infer(net, val_dataloader, loss_fn, infer_df)
             val_losses[epoch] = val_loss
             val_accuracy[epoch] = val_acc
             # val_auc[epoch] = val_auc_val
@@ -168,13 +175,15 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
     return net
 
 
-def infer(net: nn.Module, infer_dataloader: DataLoader, loss_fn: loss=None) -> Tuple[float, float]:
+def infer(net: nn.Module, infer_dataloader: DataLoader, loss_fn: loss, infer_df: np.array, test_df: pd.DataFrame = None,
+          export_path: Path = None) -> Tuple[float, float]:
     """
     Run the model on x_infer (both validation and test) and calculate the loss of the predictions.
     The model run on evaluation mode and without updating the computational graph (no_grad)
     In the AutoEncoder task - taking the x_train for inference, reconstructing the user vector
     and checking which of the 2 items for a given user (in validation, test) is higher and classify it
     as "1", as it more likely for the user to like that item.
+    :param infer_mode: 'test' for export results to csv & not checking accuracy
     :return loss, accuracy
     """
     net.eval()
@@ -189,33 +198,46 @@ def infer(net: nn.Module, infer_dataloader: DataLoader, loss_fn: loss=None) -> T
             if train_on_gpu:
                 x, y = x.cuda(), y.cuda()
             y_pred = net(x)
-            y_true = get_classification_bit_gt(infer_df=validation_rand_df)
-            infer_preds = classify_preference_for_each_user(infer_df=validation_rand_df, y_pred=y_pred)
-            infer_correct_counter += (y_true == infer_preds).sum()
+            y_true = get_classification_bit_gt(infer_df=infer_df)
+            infer_preds = classify_preference_for_each_user(infer_df=infer_df, y_pred=y_pred)
             infer_loss = loss_fn(y_pred.flatten(), y.flatten())
+            infer_correct_counter += (y_true == infer_preds).sum()
+
+            if test_df is not None and export_path is not None:
+                export_results_to_csv(test_df=test_df, bit_classification=infer_preds)
 
         running_loss += infer_loss
-    return running_loss / len(infer_dataloader), infer_correct_counter / len(infer_dataloader.dataset)  # , infer_auc_accumulated / len(infer_dataloader)
+    return running_loss / len(infer_dataloader), infer_correct_counter / len(infer_dataloader.dataset)
 
 
 if __name__ == '__main__':
+    TRAIN: bool = True
     train_df, test_rand_df, test_pop_df = read_data_files()
     train_df, train_preferences_matrix, validation_rand_df = get_validation_and_train_matrix(train_df=train_df)
-
-    train_dataloader = DataLoader(AutoEncoderCustomDataset(train_preferences_matrix), batch_size=BATCH_SIZE)
-    val_dataloader = DataLoader(AutoEncoderCustomDataset(train_preferences_matrix), batch_size=NUM_USERS)
-    user_vector_size = train_preferences_matrix.shape[1]
-    # loss_fn = nn.MSELoss()
     loss_fn = nn.BCELoss()
+    # loss_fn = nn.MSELoss()
     # loss_fn = nn.BCEWithLogitsLoss()
     # loss_fn = FocalLoss(alpha=ALPHA_TENSOR, gamma=GAMMA)
     # loss_fn = focal_loss
-    ae = AutoEncoder(input_dim=user_vector_size, output_dims=[250])
-    # print_trainable_params(ae)
 
-    optimizer = torch.optim.Adam(ae.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
-    net = train(net=ae, optimizer=optimizer, train_dataloader=train_dataloader,
-                val_dataloader=val_dataloader, is_earlystopping=True)
-    # print('End of Training - Infer mode:')
-    # infer(net, val_dataloader, loss_fn)
-    save_pt_model(net=net)
+    if TRAIN:
+        train_dataloader = DataLoader(AutoEncoderCustomDataset(train_preferences_matrix), batch_size=BATCH_SIZE)
+        val_dataloader = DataLoader(AutoEncoderCustomDataset(train_preferences_matrix), batch_size=NUM_USERS)
+
+        ae = AutoEncoder(input_dim=NUM_ITEMS, output_dims=OUTPUT_DIMS)
+        # print_trainable_params(ae)
+
+        optimizer = torch.optim.Adam(ae.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
+        net = train(net=ae, optimizer=optimizer, train_dataloader=train_dataloader,
+                    val_dataloader=val_dataloader, is_earlystopping=True, infer_df=validation_rand_df)
+        # print('End of Training - Infer mode:')
+        # infer(net, val_dataloader, loss_fn, infer_df)
+        save_pt_model(net=net)
+        print(1)
+    else:  # Infer for test results
+        net = load_pt_model()
+        test_dataloader = DataLoader(AutoEncoderCustomDataset(train_preferences_matrix), batch_size=NUM_USERS)
+        _, _ = infer(net=net, infer_dataloader=test_dataloader, loss_fn=loss_fn, infer_df=test_rand_df,
+                     export_path=EXPORT_RANDOM_RESULTS_PATH)
+        _, _ = infer(net=net, infer_dataloader=test_dataloader, loss_fn=loss_fn, infer_df=test_rand_df,
+                     export_path=EXPORT_POP_RESULTS_PATH)

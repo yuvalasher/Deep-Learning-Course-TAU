@@ -102,6 +102,14 @@ def get_classification_bit_gt(infer_df: np.array) -> np.array:
     """
     return (infer_df[:, 1] == np.max(infer_df[:, 1:3], axis=1)).astype(int)
 
+def export_results_to_csv(test_df, bit_classification: np.array):
+    """
+    Export bit classification for test data in format of <userId>, <item1>, <item2>, <bitClassifiction>
+    :return:
+    """
+    test_df['bit'] = bit_classification
+    test_df.to_csv()
+
 
 def calculate_model_metrics(y_true: np.array, y_pred: np.array, verbose: bool = True, mode: str = 'Test') -> Tuple[
     float, float, float]:
