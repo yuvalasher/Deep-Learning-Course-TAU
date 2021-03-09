@@ -1,18 +1,19 @@
 from typing import Tuple, List
 from pathlib import Path
 from torch import tensor
+
 SEED: int = 42
 # Training Consts
-NUM_EPOCHS: int = 15
-lr: float = 1e-3
+NUM_EPOCHS: int = 100
+lr: float = 1e-4
 BATCH_SIZE: int = 32
-NUM_USERS: int = 6401
+NUM_USERS: int = 6040
 PRINT_EVERY: int = 1
 SAVE_EVERY: int = 10
-ALPHA: float = 4
-ALPHA_TENSOR:tensor = tensor(ALPHA)
+ALPHA: float = 2
+ALPHA_TENSOR: tensor = tensor(ALPHA)
 GAMMA: float = 2
-WEIGHT_DECAY: float = 0.01
+WEIGHT_DECAY: float = 1e-7
 
 # Early Stopping Consts
 MIN_IMPROVEMENT: float = 1e-3

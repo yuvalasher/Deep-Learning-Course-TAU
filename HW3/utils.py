@@ -63,11 +63,12 @@ def get_mask_matrix_by_infer_df(infer_df: pd.DataFrame, y_pred_shape: Tuple[int,
     For each user there are 2 items concatenated to users_items.
     :return: mask array (ma)
     """
-    users_items = [[item_1, item_2] for item_1, item_2 in zip(infer_df[:, 1], infer_df[:, 2])]
+    users_items = [[item_1 - 1, item_2 - 1] for item_1, item_2 in zip(infer_df[:, 1], infer_df[:, 2])]
     ma = np.zeros(y_pred_shape)
     for user_id, user_items in zip(infer_df[:, 0], users_items):
-        np.put(ma[user_id], user_items, 1)
+        np.put(ma[user_id - 1], user_items, 1)
     return ma
+
 
 def get_user_items_scores_by_mask_matrix(y_pred_scores: np.array, mask_matrix: np.array) -> np.array:
     """
@@ -88,9 +89,18 @@ def classify_preference_for_each_user(infer_df: pd.DataFrame, y_pred: np.array) 
     :return: Index of the most likely item for each user
     """
     mask_matrix = get_mask_matrix_by_infer_df(infer_df=infer_df, y_pred_shape=y_pred.shape)
-    user_items_scores = get_user_items_scores_by_mask_matrix(mask_matrix=mask_matrix,
-                                                             y_pred_scores=y_pred)
+    user_items_scores = get_user_items_scores_by_mask_matrix(mask_matrix=mask_matrix, y_pred_scores=y_pred)
     return np.argmax(user_items_scores, axis=1)
+
+
+def get_classification_bit_gt(infer_df: np.array) -> np.array:
+    """
+    As the mask in classify_preference_for_each_user make the probabilities order ascending (the first probability belongs
+    to the smaller item), we need to custom the bit classification - the index of the correct item is the result of the condition
+    of after max the item values against the location of the first item (in the validation this is the correct)
+    :return: numpy array of classification bits
+    """
+    return (infer_df[:, 1] == np.max(infer_df[:, 1:3], axis=1)).astype(int)
 
 
 def calculate_model_metrics(y_true: np.array, y_pred: np.array, verbose: bool = True, mode: str = 'Test') -> Tuple[
@@ -221,28 +231,33 @@ def print_trainable_params(net: nn.Module) -> None:
             print('\t', name)
 
 
-def get_num_users_items(df: pd.DataFrame) -> Tuple[int, int]:
-    return df.UserID.max() + 1, df.ItemID.max() + 1
+def get_num_users_items(df) -> Tuple[int, int]:
+    if type(df) == pd.DataFrame:
+        df = df.to_numpy()
+    return len(np.unique(df[:, 0])), len(np.unique(df[:, 1])) + 1
 
 
-def get_train_random_validation_data(train_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def get_train_random_validation_data(train_df: pd.DataFrame) -> Tuple[np.array, np.array]:
     """
     Creating random validation set from the train set - for each user, there is only one record in the validation
     The item the user liked is in the first column ("Item1")
     """
+    train_df = train_df.to_numpy()
     num_users, num_items = get_num_users_items(df=train_df)
     validation_indices = []
-    validation_df = pd.DataFrame(columns=['UserID', 'Item1', 'Item2'])
-    for user_id in train_df.UserID.values:
-        user_data = train_df.query('UserID == @user_id')
-        validation_row = user_data.sample(1)
-        validation_row.rename(columns={'ItemID': 'Item1'}, inplace=True)
-        negative_item = np.random.choice(list(set(range(1, num_items)).difference(user_data.ItemID.unique())), 1)[0]
-        validation_row['Item2'] = negative_item
-        validation_indices.append(validation_row.index[0])
-        validation_df = validation_df.append(validation_row)
-    train_df.drop(validation_indices, inplace=True)
-    train_df.reset_index(drop=True, inplace=True)
+    validation_df = np.zeros((num_users, 3))
+    for user_id in np.unique(train_df[:, 0]):
+        user_items = np.where(train_df[:, 0] == user_id)[0]
+        validation_user_item_index = np.random.choice(user_items)
+        validation_user_item = train_df[validation_user_item_index][1]
+        negative_user_item = np.random.choice(list(set(range(1, num_items)).difference(user_items)), 1)[0]
+
+        validation_df[user_id - 1][0] = user_id
+        validation_df[user_id - 1][1] = validation_user_item
+        validation_df[user_id - 1][2] = negative_user_item
+        validation_indices.append(validation_user_item_index)
+
+    train_df = np.delete(train_df, validation_indices, axis=0)
     return train_df, validation_df.astype(np.int64)
 
 
@@ -254,8 +269,8 @@ def create_user_items_preferences_matrix(df: pd.DataFrame) -> np.array:
     """
     fill_value = 1
     preferences_matrix = np.zeros(get_num_users_items(df=df))
-    for user_id in df.UserID.values:
-        np.put(preferences_matrix[user_id], df.query('UserID == @user_id').ItemID.values, fill_value)
+    for user_id in np.unique(df[:, 0]):
+        np.put(preferences_matrix[user_id - 1], df[np.where(df[:, 0] == user_id)][:, 1] - 1, fill_value)
     return preferences_matrix.astype(np.float64)
 
 
@@ -273,7 +288,6 @@ def get_validation_and_train_matrix(train_df: pd.DataFrame) -> Tuple[pd.DataFram
     """
     Extracting validation dataset from the train set, saving object for saving time while debugging
     """
-
     if len(os.listdir((Path.cwd() / "hdf5"))) == 0:
         train_df, validation_rand_df = get_train_random_validation_data(train_df=train_df)
         train_preferences_matrix = create_user_items_preferences_matrix(df=train_df)

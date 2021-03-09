@@ -26,7 +26,6 @@ class AutoEncoderCustomDataset(Dataset):
     Define x, y for data of AutoEncoder
     The y is x (for reconstruction error)
     """
-
     def __init__(self, features: np.array):
         self.features = torch.Tensor(features).float()
         self.labels = torch.Tensor(features).float()
@@ -41,11 +40,11 @@ class AutoEncoderCustomDataset(Dataset):
 class AutoEncoder(nn.Module):
     def __init__(self, input_dim: int, output_dims: List[int]):
         super(AutoEncoder, self).__init__()
-        encoder_layers = [nn.Linear(input_dim, output_dims[0])]
+        encoder_layers = [nn.Dropout(0.5), nn.Linear(input_dim, output_dims[0])]
         decoder_layers = []
         for i in range(1, len(output_dims)):
             encoder_layers.append(nn.ReLU())
-            encoder_layers.append(nn.Linear(output_dims[i - 1], output_dims[i]))
+            encoder_layers.extend([nn.Linear(output_dims[i - 1], output_dims[i]), nn.Sigmoid()])
         self.encoder = nn.Sequential(*encoder_layers)
 
         for i in range(1, len(output_dims)):
@@ -58,10 +57,6 @@ class AutoEncoder(nn.Module):
         encoding = self.encoder(x)
         reconstruction = self.decoder(encoding)
         return reconstruction
-
-    @staticmethod
-    def get_loss(original, reconstruction):
-        F.l1_loss(input=reconstruction, target=original)
 
 
 def focal_loss(input, target,alpha=ALPHA_TENSOR, gamma: float = GAMMA) -> Tensor:
@@ -111,17 +106,18 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
 
         net.train()
         for x_train, y_train in tqdm(train_dataloader):
+            # weights = torch.where(y_train.flatten() == 0, torch.tensor(0.1), torch.tensor(0.9))
+            # loss_fn = nn.BCEWithLogitsLoss(pos_weight=weights)
             if train_on_gpu:
                 net.cuda()
                 x_train, y_train = x_train.cuda(), y_train.cuda()
             optimizer.zero_grad()
             y_train_pred = net(x_train)
 
-            loss = loss_fn(y_train_pred, y_train)
+            loss = loss_fn(y_train_pred.flatten(), y_train.flatten())
             loss_running += loss.item()
             loss.backward()
             optimizer.step()
-            # classfied_data = classify_preference_for_each_user(infer_df=validation_rand_df, y_pred=y_train_pred)
             train_preds = np.where(y_train_pred > 0.5, 1, 0)
             train_correct_counter += (train_preds == np.array(y_train)).sum()
             train_positive_number += get_number_of_positves(y=y_train)
@@ -172,7 +168,7 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
     return net
 
 
-def infer(net: nn.Module, infer_dataloader: DataLoader, loss_fn: loss) -> Tuple[float, float, float]:
+def infer(net: nn.Module, infer_dataloader: DataLoader, loss_fn: loss=None) -> Tuple[float, float]:
     """
     Run the model on x_infer (both validation and test) and calculate the loss of the predictions.
     The model run on evaluation mode and without updating the computational graph (no_grad)
@@ -187,19 +183,19 @@ def infer(net: nn.Module, infer_dataloader: DataLoader, loss_fn: loss) -> Tuple[
     infer_auc_accumulated = 0
 
     for x, y in infer_dataloader:
+        # weights = torch.where(y.flatten() == 0, torch.tensor(0.1), torch.tensor(0.9))
+        # loss_fn = nn.BCEWithLogitsLoss(pos_weight=weights)
         with torch.no_grad():
             if train_on_gpu:
                 x, y = x.cuda(), y.cuda()
             y_pred = net(x)
+            y_true = get_classification_bit_gt(infer_df=validation_rand_df)
             infer_preds = classify_preference_for_each_user(infer_df=validation_rand_df, y_pred=y_pred)
-            infer_correct_counter += len(infer_preds) - infer_preds.sum() # All the validation correct preds located in index 0
-            # infer_auc_accumulated += calculate_auc_score(y_true=y, y_pred=preds)
-            infer_loss = loss_fn(y_pred, y)
+            infer_correct_counter += (y_true == infer_preds).sum()
+            infer_loss = loss_fn(y_pred.flatten(), y.flatten())
 
         running_loss += infer_loss
-    # infer_correct_counter = infer_correct_counter.item()
-    return running_loss / len(infer_dataloader), infer_correct_counter / len(
-        infer_dataloader.dataset)  # , infer_auc_accumulated / len(infer_dataloader)
+    return running_loss / len(infer_dataloader), infer_correct_counter / len(infer_dataloader.dataset)  # , infer_auc_accumulated / len(infer_dataloader)
 
 
 if __name__ == '__main__':
@@ -209,13 +205,17 @@ if __name__ == '__main__':
     train_dataloader = DataLoader(AutoEncoderCustomDataset(train_preferences_matrix), batch_size=BATCH_SIZE)
     val_dataloader = DataLoader(AutoEncoderCustomDataset(train_preferences_matrix), batch_size=NUM_USERS)
     user_vector_size = train_preferences_matrix.shape[1]
-    # loss_fn = nn.BCELoss()
-    loss_fn = FocalLoss(alpha=ALPHA_TENSOR, gamma=GAMMA)
+    # loss_fn = nn.MSELoss()
+    loss_fn = nn.BCELoss()
+    # loss_fn = nn.BCEWithLogitsLoss()
+    # loss_fn = FocalLoss(alpha=ALPHA_TENSOR, gamma=GAMMA)
     # loss_fn = focal_loss
-    ae = AutoEncoder(input_dim=user_vector_size, output_dims=[2048, 1024, 512, 256, 128, 64])
+    ae = AutoEncoder(input_dim=user_vector_size, output_dims=[250])
     # print_trainable_params(ae)
 
-    optimizer = torch.optim.Adam(ae.parameters(), lr=lr)  # , weight_decay=WEIGHT_DECAY)
+    optimizer = torch.optim.Adam(ae.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
     net = train(net=ae, optimizer=optimizer, train_dataloader=train_dataloader,
                 val_dataloader=val_dataloader, is_earlystopping=True)
+    # print('End of Training - Infer mode:')
+    # infer(net, val_dataloader, loss_fn)
     save_pt_model(net=net)
