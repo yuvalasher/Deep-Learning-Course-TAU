@@ -46,9 +46,9 @@ class AutoEncoderCustomDataset(Dataset):
 
 
 class AutoEncoder(nn.Module):
-    def __init__(self, input_dim: int, output_dims: List[int]):
+    def __init__(self, input_dim: int, output_dims: List[int], dropout_p: float=DROPOUT_P):
         super(AutoEncoder, self).__init__()
-        encoder_layers = [nn.Dropout(0.5), nn.Linear(input_dim, output_dims[0])]
+        encoder_layers = [nn.Dropout(dropout_p), nn.Linear(input_dim, output_dims[0])]
         decoder_layers = []
         for i in range(1, len(output_dims)):
             encoder_layers.append(nn.ReLU())
@@ -103,7 +103,8 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
     best_epoch: int = NUM_EPOCHS - 1
 
     if val_dataloader:
-        untrained_val_loss, untrained_val_accuracy = infer(net, val_dataloader, loss_fn, infer_df)
+        untrained_val_loss, untrained_val_accuracy = infer(net=net, infer_dataloader=val_dataloader, loss_fn=loss_fn,
+                                                           infer_df=infer_df)
         print(f'Validation Loss before training: {untrained_val_loss:.5f}')
 
     for epoch in range(NUM_EPOCHS):
@@ -137,7 +138,7 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
         train_recall = train_positive_pred / train_positive_number * 100
 
         if val_dataloader:
-            val_loss, val_acc = infer(net, val_dataloader, loss_fn, infer_df)
+            val_loss, val_acc = infer(net=net, infer_dataloader=val_dataloader, loss_fn=loss_fn, infer_df=infer_df)
             val_losses[epoch] = val_loss
             val_accuracy[epoch] = val_acc
             # val_auc[epoch] = val_auc_val
@@ -175,8 +176,22 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
     return net
 
 
-def infer(net: nn.Module, infer_dataloader: DataLoader, loss_fn: loss, infer_df: np.array, test_df: pd.DataFrame = None,
-          export_path: Path = None) -> Tuple[float, float]:
+def test(net: nn.Module, test_dataloader: DataLoader, test_df: np.array, export_path: Path) -> None:
+    """
+    Usage in test time for inference and write results to csv file for submission
+    """
+    net.eval()
+    for x, y in test_dataloader:
+        with torch.no_grad():
+            if train_on_gpu:
+                x, y = x.cuda(), y.cuda()
+            y_pred = net(x)
+            infer_preds = classify_preference_for_each_user(infer_df=test_df, y_pred=y_pred)
+            if test_df is not None and export_path is not None:
+                export_results_to_csv(test_df=test_df, bit_classification=infer_preds, export_path=export_path)
+
+
+def infer(net: nn.Module, infer_dataloader: DataLoader, loss_fn: loss, infer_df: np.array) -> Tuple[float, float]:
     """
     Run the model on x_infer (both validation and test) and calculate the loss of the predictions.
     The model run on evaluation mode and without updating the computational graph (no_grad)
@@ -198,17 +213,20 @@ def infer(net: nn.Module, infer_dataloader: DataLoader, loss_fn: loss, infer_df:
             if train_on_gpu:
                 x, y = x.cuda(), y.cuda()
             y_pred = net(x)
-            y_true = get_classification_bit_gt(infer_df=infer_df)
             infer_preds = classify_preference_for_each_user(infer_df=infer_df, y_pred=y_pred)
             infer_loss = loss_fn(y_pred.flatten(), y.flatten())
+            y_true = np.zeros_like(infer_preds)  # In validation, the correct index is the 0 class
             infer_correct_counter += (y_true == infer_preds).sum()
-
-            if test_df is not None and export_path is not None:
-                export_results_to_csv(test_df=test_df, bit_classification=infer_preds)
-
         running_loss += infer_loss
     return running_loss / len(infer_dataloader), infer_correct_counter / len(infer_dataloader.dataset)
 
+def test_submission(net: nn.Module=None):
+    if net is None:
+        net = load_pt_model()
+    test_dataloader = DataLoader(AutoEncoderCustomDataset(train_preferences_matrix), batch_size=NUM_USERS)
+    test(net=net, test_dataloader=test_dataloader, test_df=test_rand_df.to_numpy(), export_path=EXPORT_RANDOM_RESULTS_PATH)
+    test(net=net, test_dataloader=test_dataloader, test_df=test_pop_df.to_numpy(), export_path=EXPORT_POP_RESULTS_PATH)
+    print('Files Exported Successfully')
 
 if __name__ == '__main__':
     TRAIN: bool = True
@@ -231,13 +249,11 @@ if __name__ == '__main__':
         net = train(net=ae, optimizer=optimizer, train_dataloader=train_dataloader,
                     val_dataloader=val_dataloader, is_earlystopping=True, infer_df=validation_rand_df)
         # print('End of Training - Infer mode:')
-        # infer(net, val_dataloader, loss_fn, infer_df)
+        # infer(net=net, infer_dataloader=val_dataloader, loss_fn=loss_fn, infer_df=infer_df)
         save_pt_model(net=net)
         print(1)
-    else:  # Infer for test results
-        net = load_pt_model()
-        test_dataloader = DataLoader(AutoEncoderCustomDataset(train_preferences_matrix), batch_size=NUM_USERS)
-        _, _ = infer(net=net, infer_dataloader=test_dataloader, loss_fn=loss_fn, infer_df=test_rand_df,
-                     export_path=EXPORT_RANDOM_RESULTS_PATH)
-        _, _ = infer(net=net, infer_dataloader=test_dataloader, loss_fn=loss_fn, infer_df=test_rand_df,
-                     export_path=EXPORT_POP_RESULTS_PATH)
+        test_submission(net=net)
+    else:  # Infer for test results and export csv for submission
+        test_submission()
+
+

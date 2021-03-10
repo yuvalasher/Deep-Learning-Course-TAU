@@ -4,7 +4,7 @@ from torch import tensor
 
 SEED: int = 42
 # Training Consts
-NUM_EPOCHS: int = 3
+NUM_EPOCHS: int = 100
 lr: float = 1e-4
 BATCH_SIZE: int = 32
 NUM_USERS: int = 6040
@@ -15,12 +15,12 @@ SAVE_EVERY: int = 10
 ALPHA: float = 2
 ALPHA_TENSOR: tensor = tensor(ALPHA)
 GAMMA: float = 2
-WEIGHT_DECAY: float = 1e-7
-
+WEIGHT_DECAY: float = 1e-5
+DROPOUT_P: float = 0.5
 # Early Stopping Consts
 MIN_IMPROVEMENT: float = 1e-3
 PATIENT_NUM_EPOCHS: int = 10
-OUTPUT_DIMS: List[int] = [250]
+OUTPUT_DIMS: List[int] = [500, 250]
 # File Paths
 PROJECT_PATH: Path = Path.cwd()
 DATA_PATH: Path = Path('Data')

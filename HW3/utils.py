@@ -55,7 +55,7 @@ def get_number_of_positves(y: np.array) -> int:
     return len(np.where(y.flatten() == 1)[0])
 
 
-def get_mask_matrix_by_infer_df(infer_df: pd.DataFrame, y_pred_shape: Tuple[int, int]) -> np.array:
+def get_mask_matrix_by_infer_df(infer_df: np.array, y_pred_shape: Tuple[int, int]) -> np.array:
     """
     Create mask matrix of each user to the infer items in the infer_df
     The mask contains "1" & "0" for each item for each user, if the item belongs in the dataframe,
@@ -81,34 +81,41 @@ def get_user_items_scores_by_mask_matrix(y_pred_scores: np.array, mask_matrix: n
     return ma[ma.nonzero()].reshape(-1, 2)
 
 
-def classify_preference_for_each_user(infer_df: pd.DataFrame, y_pred: np.array) -> np.array:
+def classify_preference_for_each_user(infer_df: np.array, y_pred: np.array) -> np.array:
     """
     Classify the most likely each user to like the most from 2 items (by infer dataframe) - for each user, classify the
     item is more likely as the location (scores of 0.5, 0.9 -> results to "1" as the second location has better reconstruction)
     np.argmax((df*ma)[(df * ma).nonzero()].reshape(-1,2), axis=1)
+    The probabilities in user_items_scores arrange from the the lower value of the items to the highest, so we need to flip
+    the classification of the bit if in infer_df there arrangement is different (example in get_flip_bit_for_infer_df)
     :return: Index of the most likely item for each user
     """
     mask_matrix = get_mask_matrix_by_infer_df(infer_df=infer_df, y_pred_shape=y_pred.shape)
     user_items_scores = get_user_items_scores_by_mask_matrix(mask_matrix=mask_matrix, y_pred_scores=y_pred)
-    return np.argmax(user_items_scores, axis=1)
+    y_pred = np.argmax(user_items_scores, axis=1)
+    flip_bit = get_flip_bit_for_infer_df(infer_df=infer_df)
+    flipped_y_pred = np.where(flip_bit == 0, y_pred, 1 - y_pred)
+    return flipped_y_pred
 
 
-def get_classification_bit_gt(infer_df: np.array) -> np.array:
+def get_flip_bit_for_infer_df(infer_df: np.array):
     """
     As the mask in classify_preference_for_each_user make the probabilities order ascending (the first probability belongs
-    to the smaller item), we need to custom the bit classification - the index of the correct item is the result of the condition
-    of after max the item values against the location of the first item (in the validation this is the correct)
-    :return: numpy array of classification bits
+    to the smaller item), we need to custom the flip_bit to indicate that the results the np.argmax(user_items_scores)
+    should be flipped. E.X: user: 111, Item1: 1512, Item2: 1217, the probabilities will be arrange as np.argmax{P(1217), P(1512)},
+    nevertheless, it should be the opposite, so the flip_bit should be "1" and flip the bit classification
+    :return: flip bit for each row in the infer df
     """
     return (infer_df[:, 1] == np.max(infer_df[:, 1:3], axis=1)).astype(int)
 
-def export_results_to_csv(test_df, bit_classification: np.array):
+
+def export_results_to_csv(test_df: np.array, bit_classification: np.array, export_path: Path) -> None:
     """
     Export bit classification for test data in format of <userId>, <item1>, <item2>, <bitClassifiction>
-    :return:
     """
+    test_df = pd.DataFrame(test_df).rename(columns={0: 'UserID', 1: 'Item1', 2: 'Item2'})
     test_df['bit'] = bit_classification
-    test_df.to_csv()
+    test_df.to_csv(export_path, index=False)
 
 
 def calculate_model_metrics(y_true: np.array, y_pred: np.array, verbose: bool = True, mode: str = 'Test') -> Tuple[
