@@ -16,11 +16,11 @@ ALPHA: float = 2
 ALPHA_TENSOR: tensor = tensor(ALPHA)
 GAMMA: float = 2
 WEIGHT_DECAY: float = 1e-5
-DROPOUT_P: float = 0.5
 # Early Stopping Consts
 MIN_IMPROVEMENT: float = 1e-3
 PATIENT_NUM_EPOCHS: int = 10
-OUTPUT_DIMS: List[int] = [500, 250]
+OUTPUT_DIMS: List[int] = [500]
+
 # File Paths
 PROJECT_PATH: Path = Path.cwd()
 DATA_PATH: Path = Path('Data')

@@ -175,16 +175,6 @@ def plot_values_by_epochs(train_values: np.array, test_values: np.array, title: 
     plt.show()
 
 
-def calculate_auc_score(y_true: np.array, y_pred: np.array) -> float:
-    if type(y_true) == torch.Tensor:
-        y_true = y_true.detach().numpy()
-    if type(y_pred) == torch.Tensor:
-        y_pred = y_pred.detach().numpy()
-
-    fpr, tpr, thresholds = roc_curve(y_true=y_true, y_score=y_pred)
-    return auc(fpr, tpr)
-
-
 def plot_roc_curve(y_test: np.array, y_test_pred: np.array) -> None:
     fpr, tpr, thresholds = roc_curve(y_test, y_test_pred)
     auc_score = auc(fpr, tpr)

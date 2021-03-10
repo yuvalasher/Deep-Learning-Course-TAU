@@ -7,8 +7,6 @@ from torch.utils.data import DataLoader, Dataset, Subset
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
-from sklearn.linear_model import LogisticRegression, LinearRegression, LogisticRegressionCV
-from sklearn.metrics import roc_auc_score, roc_curve, auc
 from utils import *
 from consts import *
 from focal_loss.focal_loss import FocalLoss
@@ -33,7 +31,6 @@ class AutoEncoderCustomDataset(Dataset):
     Define x, y for data of AutoEncoder
     The y is x (for reconstruction error)
     """
-
     def __init__(self, features: np.array):
         self.features = torch.Tensor(features).float()
         self.labels = torch.Tensor(features).float()
@@ -46,18 +43,16 @@ class AutoEncoderCustomDataset(Dataset):
 
 
 class AutoEncoder(nn.Module):
-    def __init__(self, input_dim: int, output_dims: List[int], dropout_p: float=DROPOUT_P):
+    def __init__(self, input_dim: int, output_dims: List[int]):
         super(AutoEncoder, self).__init__()
-        encoder_layers = [nn.Dropout(dropout_p), nn.Linear(input_dim, output_dims[0])]
+        encoder_layers = [nn.Linear(input_dim, output_dims[0])]
         decoder_layers = []
         for i in range(1, len(output_dims)):
-            encoder_layers.append(nn.ReLU())
-            encoder_layers.extend([nn.Linear(output_dims[i - 1], output_dims[i]), nn.Sigmoid()])
+            encoder_layers.extend([nn.ReLU(), nn.Linear(output_dims[i - 1], output_dims[i])])
         self.encoder = nn.Sequential(*encoder_layers)
 
         for i in range(1, len(output_dims)):
-            decoder_layers.append(nn.ReLU())
-            decoder_layers.append(nn.Linear(output_dims[-i], output_dims[-i - 1]))
+            decoder_layers.extend([nn.ReLU(), nn.Linear(output_dims[-i], output_dims[-i - 1])])
         decoder_layers.extend([nn.ReLU(), nn.Linear(output_dims[0], input_dim), nn.Sigmoid()])
         self.decoder = nn.Sequential(*decoder_layers)
 
@@ -96,10 +91,8 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
     train_accuracy: np.array = np.zeros(NUM_EPOCHS)
     val_losses: np.array = np.zeros(NUM_EPOCHS)
     val_accuracy: np.array = np.zeros(NUM_EPOCHS)
-    train_auc: np.array = np.zeros(NUM_EPOCHS)
     train_positive_pred: int = 0
     train_positive_number: int = 0
-    val_auc: np.array = np.zeros(NUM_EPOCHS)
     best_epoch: int = NUM_EPOCHS - 1
 
     if val_dataloader:
@@ -110,13 +103,10 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
     for epoch in range(NUM_EPOCHS):
         print(f'*************** Epoch {epoch + 1} ***************')
         train_correct_counter = 0
-        train_auc_accumulated = 0
         loss_running = 0
 
         net.train()
         for x_train, y_train in tqdm(train_dataloader):
-            # weights = torch.where(y_train.flatten() == 0, torch.tensor(0.1), torch.tensor(0.9))
-            # loss_fn = nn.BCEWithLogitsLoss(pos_weight=weights)
             if train_on_gpu:
                 net.cuda()
                 x_train, y_train = x_train.cuda(), y_train.cuda()
@@ -134,14 +124,12 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
 
         train_losses[epoch] = loss_running / len(train_dataloader)
         train_accuracy[epoch] = train_correct_counter.item() / NUMBER_OF_PREDS
-        train_auc[epoch] = train_auc_accumulated / len(train_dataloader)
         train_recall = train_positive_pred / train_positive_number * 100
 
         if val_dataloader:
             val_loss, val_acc = infer(net=net, infer_dataloader=val_dataloader, loss_fn=loss_fn, infer_df=infer_df)
             val_losses[epoch] = val_loss
             val_accuracy[epoch] = val_acc
-            # val_auc[epoch] = val_auc_val
 
         if is_earlystopping and val_dataloader and check_earlystopping(loss=val_losses, epoch=epoch):
             print('EarlyStopping !!!')
@@ -151,11 +139,9 @@ def train(net: nn.Module, optimizer: torch.optim, train_dataloader: DataLoader =
             print(f"Epoch: {epoch + 1}/{NUM_EPOCHS},",
                   f"Train loss: {train_losses[epoch]:.5f}, Train Num Correct: {train_correct_counter} "
                   f"/ {NUMBER_OF_PREDS}, Train Accuracy: {train_accuracy[epoch]:.3f}, Train Recall: {train_recall:.3f}")
-            # f"Train AUC: {train_auc[epoch]:.5f}")
 
             if val_dataloader:
-                print(f"Validation loss: {val_losses[epoch]:.5f}, Validation Accuracy: {val_accuracy[epoch]:.3f}",
-                      f"Validation AUC: {val_auc[epoch]:.5f}")
+                print(f"Validation loss: {val_losses[epoch]:.5f}, Validation Accuracy: {val_accuracy[epoch]:.3f}")
 
         if (epoch + 1) % SAVE_EVERY == 0:
             save_pt_model(net=net)
@@ -204,11 +190,8 @@ def infer(net: nn.Module, infer_dataloader: DataLoader, loss_fn: loss, infer_df:
     net.eval()
     running_loss = 0
     infer_correct_counter = 0
-    infer_auc_accumulated = 0
 
     for x, y in infer_dataloader:
-        # weights = torch.where(y.flatten() == 0, torch.tensor(0.1), torch.tensor(0.9))
-        # loss_fn = nn.BCEWithLogitsLoss(pos_weight=weights)
         with torch.no_grad():
             if train_on_gpu:
                 x, y = x.cuda(), y.cuda()
@@ -220,21 +203,22 @@ def infer(net: nn.Module, infer_dataloader: DataLoader, loss_fn: loss, infer_df:
         running_loss += infer_loss
     return running_loss / len(infer_dataloader), infer_correct_counter / len(infer_dataloader.dataset)
 
-def test_submission(net: nn.Module=None):
+
+def test_submission(net: nn.Module = None):
     if net is None:
         net = load_pt_model()
     test_dataloader = DataLoader(AutoEncoderCustomDataset(train_preferences_matrix), batch_size=NUM_USERS)
-    test(net=net, test_dataloader=test_dataloader, test_df=test_rand_df.to_numpy(), export_path=EXPORT_RANDOM_RESULTS_PATH)
+    test(net=net, test_dataloader=test_dataloader, test_df=test_rand_df.to_numpy(),
+         export_path=EXPORT_RANDOM_RESULTS_PATH)
     test(net=net, test_dataloader=test_dataloader, test_df=test_pop_df.to_numpy(), export_path=EXPORT_POP_RESULTS_PATH)
     print('Files Exported Successfully')
+
 
 if __name__ == '__main__':
     TRAIN: bool = True
     train_df, test_rand_df, test_pop_df = read_data_files()
     train_df, train_preferences_matrix, validation_rand_df = get_validation_and_train_matrix(train_df=train_df)
     loss_fn = nn.BCELoss()
-    # loss_fn = nn.MSELoss()
-    # loss_fn = nn.BCEWithLogitsLoss()
     # loss_fn = FocalLoss(alpha=ALPHA_TENSOR, gamma=GAMMA)
     # loss_fn = focal_loss
 
@@ -243,17 +227,12 @@ if __name__ == '__main__':
         val_dataloader = DataLoader(AutoEncoderCustomDataset(train_preferences_matrix), batch_size=NUM_USERS)
 
         ae = AutoEncoder(input_dim=NUM_ITEMS, output_dims=OUTPUT_DIMS)
-        # print_trainable_params(ae)
+        print_trainable_params(ae)
 
         optimizer = torch.optim.Adam(ae.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
         net = train(net=ae, optimizer=optimizer, train_dataloader=train_dataloader,
                     val_dataloader=val_dataloader, is_earlystopping=True, infer_df=validation_rand_df)
-        # print('End of Training - Infer mode:')
-        # infer(net=net, infer_dataloader=val_dataloader, loss_fn=loss_fn, infer_df=infer_df)
         save_pt_model(net=net)
-        print(1)
         test_submission(net=net)
     else:  # Infer for test results and export csv for submission
         test_submission()
-
-
